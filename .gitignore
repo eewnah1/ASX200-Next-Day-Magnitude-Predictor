@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.eggs/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.env
+
+# SQLite / local data
+*.db
+*.sqlite
+*.sqlite3
+data/
+raw_snapshots/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Streamlit
+.streamlit/
+
+# Notebooks
+notebooks/.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db

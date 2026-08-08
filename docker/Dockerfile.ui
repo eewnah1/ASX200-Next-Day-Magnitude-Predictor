@@ -1,0 +1,17 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends gcc && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml README.md ./
+COPY src ./src
+
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -e .
+
+EXPOSE 8501
+
+ENV API_URL=http://api:8000/api/v1
+
+CMD ["streamlit", "run", "src/asx200_mag_predictor/ui/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
