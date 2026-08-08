@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 
 from asx200_mag_predictor.config import get_settings
 from asx200_mag_predictor.data.fetchers import DataFetcher
@@ -52,6 +53,17 @@ def cmd_record_actual(args: argparse.Namespace) -> None:
     print(f"Recorded actual {args.actual_return}% for prediction {args.prediction_id}")
 
 
+def cmd_train_ml(args: argparse.Namespace) -> None:
+    from asx200_mag_predictor.scoring.ml import MLTrainer
+
+    settings = get_settings()
+    setup_logging(settings)
+    trainer = MLTrainer(settings=settings)
+    period = f"{args.months}mo"
+    result = trainer.run(period=period)
+    print(json.dumps(result, indent=2, default=str))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="ASX200 Next-Day Magnitude Predictor")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -77,6 +89,10 @@ def main() -> None:
 
     p_scheduler = sub.add_parser("run-scheduler", help="Start the daily prediction scheduler")
     p_scheduler.set_defaults(func=cmd_run_scheduler)
+
+    p_train_ml = sub.add_parser("train-ml", help="Train the hybrid ML models on historical data")
+    p_train_ml.add_argument("--months", type=int, default=24, help="Months of history to fetch")
+    p_train_ml.set_defaults(func=cmd_train_ml)
 
     args = parser.parse_args()
     args.func(args)

@@ -41,6 +41,10 @@ class PredictionRecord(Base):
     secondary_bucket: Mapped[str | None] = mapped_column(String(30), nullable=True)
     primary_score: Mapped[float] = mapped_column(Float, default=0.0)
     secondary_score: Mapped[float] = mapped_column(Float, default=0.0)
+    ml_available: Mapped[bool] = mapped_column(Boolean, default=False)
+    ml_probabilities_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    ml_feature_importance_json: Mapped[list] = mapped_column(JSON, default=list)
+    ml_fallback_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
     actual: Mapped["ActualRecord"] = relationship(back_populates="prediction", uselist=False)
 
@@ -102,6 +106,10 @@ def _add_missing_columns(engine) -> None:
             ("secondary_bucket", "VARCHAR"),
             ("primary_score", "FLOAT"),
             ("secondary_score", "FLOAT"),
+            ("ml_available", "BOOLEAN"),
+            ("ml_probabilities_json", "JSON"),
+            ("ml_feature_importance_json", "JSON"),
+            ("ml_fallback_reason", "VARCHAR"),
         ],
         "actuals": [
             ("actual_return_pct", "FLOAT"),

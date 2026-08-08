@@ -64,6 +64,10 @@ class Repository:
             secondary_bucket=prediction.secondary_bucket,
             primary_score=prediction.primary_score,
             secondary_score=prediction.secondary_score,
+            ml_available=prediction.ml_available,
+            ml_probabilities_json=prediction.ml_probabilities or {},
+            ml_feature_importance_json=prediction.ml_feature_importance or [],
+            ml_fallback_reason=prediction.ml_fallback_reason,
         )
         self.session.add(record)
         self.session.commit()
@@ -177,4 +181,8 @@ class Repository:
             secondary_bucket=record.secondary_bucket,
             primary_score=record.primary_score or 0.0,
             secondary_score=record.secondary_score or 0.0,
+            ml_available=record.ml_available if record.ml_available is not None else False,
+            ml_probabilities=record.ml_probabilities_json or {},
+            ml_feature_importance=record.ml_feature_importance_json or [],
+            ml_fallback_reason=record.ml_fallback_reason,
         )

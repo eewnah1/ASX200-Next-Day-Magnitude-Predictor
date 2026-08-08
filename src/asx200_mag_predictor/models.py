@@ -112,6 +112,9 @@ class FeatureVector(BaseModel):
     high_20d_distance_pct: float | None = None
     high_50d_distance_pct: float | None = None
     ath_score: float | None = None
+    asx_1d_return_pct: float | None = None
+    asx_2d_return_pct: float | None = None
+    asx_3d_return_pct: float | None = None
     index_5d_return_pct: float | None = None
     momentum_exhaustion_score: float | None = None
     bollinger_position: float | None = None
@@ -185,6 +188,10 @@ class Prediction(BaseModel):
     secondary_bucket: str | None = None
     primary_score: float = 0.0
     secondary_score: float = 0.0
+    ml_available: bool = False
+    ml_probabilities: dict[str, Any] | None = None
+    ml_feature_importance: list[dict[str, Any]] = Field(default_factory=list)
+    ml_fallback_reason: str | None = None
 
 
 class Actual(BaseModel):

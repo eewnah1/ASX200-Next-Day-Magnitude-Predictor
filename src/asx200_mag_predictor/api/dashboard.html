@@ -56,9 +56,20 @@
     <div id="model" class="big">-</div>
     <div id="primaryBucket" style="color:var(--muted);margin-top:8px;">Primary bucket: -</div>
     <div id="secondaryBucket" style="color:var(--muted);display:none;">Secondary bucket: -</div>
-    <div id="confidence" style="color:var(--muted)">Confidence: -</div>
+    <div id="ruleScore" style="color:var(--muted);margin-top:4px;">Rule score: -</div>
+    <div id="confidence" style="color:var(--muted);margin-top:4px;">Confidence: -</div>
+    <div id="mlAgreement" style="color:var(--muted);font-size:0.9rem;margin-top:4px;">Rule / ML agreement: -</div>
     <div id="generated" style="color:var(--muted);font-size:0.9rem;margin-top:8px;">Generated: -</div>
     <div id="dataAsOf" style="color:var(--muted);font-size:0.9rem;margin-top:4px;">Data as of: -</div>
+  </div>
+
+  <div id="mlFallback" class="degraded-banner" style="display:none;background:#451a03;color:#fed7aa;border-color:#f97316;">ML models not available – using rule-based scoring only.</div>
+
+  <div class="grid" id="mlProbs" style="margin-bottom:24px;"></div>
+
+  <div class="card" id="featureImportance" style="margin-bottom:24px;display:none;">
+    <h2>Top ML feature importances</h2>
+    <table id="featureImportanceTable" style="width:100%;"><thead><tr><th>Feature</th><th>Importance</th></tr></thead><tbody></tbody></table>
   </div>
 
   <div class="grid">
@@ -91,13 +102,20 @@
   </details>
 
   <script>
-    const API = '/api/v1';
+    function getAuthHeader() {
+      const m = window.location.href.match(/^https?:\/\/([^:@]+):([^@]+)@/);
+      if (m) {
+        return { 'Authorization': 'Basic ' + btoa(m[1] + ':' + m[2]) };
+      }
+      return {};
+    }
+    const API = `${window.location.protocol}//${window.location.host}/api/v1`;
     const $ = id => document.getElementById(id);
 
     async function api(path, method='GET', body=null) {
       const ctrl = new AbortController();
       const to = setTimeout(() => ctrl.abort(), 90000);
-      const headers = body ? { 'Content-Type': 'application/json' } : {};
+      const headers = { ...getAuthHeader(), ...(body ? { 'Content-Type': 'application/json' } : {}) };
       try {
         const res = await fetch(API + path, { method, headers, body: body ? JSON.stringify(body) : null, signal: ctrl.signal });
         clearTimeout(to);
@@ -131,6 +149,63 @@
       return 'bad';
     }
 
+    function mlColor(label) {
+      const l = (label || '').toLowerCase();
+      if (l.includes('large down') || l.includes('mild bear')) return 'var(--negative)';
+      if (l.includes('large up') || l.includes('mild bull')) return 'var(--low)';
+      return 'var(--muted)';
+    }
+
+    function mlProbCard(label, prob) {
+      return `<div class="card"><h2>${label}</h2><div class="big" style="color:${mlColor(label)}">${(prob*100).toFixed(1)}%</div><div class="bar"><div class="bar-fill" style="width:${prob*100}%;background:${mlColor(label)}"></div></div></div>`;
+    }
+
+    function renderMl(p) {
+      const fb = $('mlFallback');
+      if (!p.ml_available) {
+        fb.style.display = 'block';
+      } else {
+        fb.style.display = 'none';
+      }
+      const primary = p.ml_probabilities && p.ml_probabilities.primary ? p.ml_probabilities.primary : {};
+      const secondary = p.ml_probabilities && p.ml_probabilities.secondary ? p.ml_probabilities.secondary : {};
+      let html = '';
+      if (Object.keys(primary).length) {
+        html += `<div style="grid-column:1/-1; color:var(--muted); margin-bottom:-8px;"><strong>Primary ML probabilities</strong></div>`;
+        html += Object.entries(primary).map(([k, v]) => mlProbCard(k, v)).join('');
+      }
+      if (Object.keys(secondary).length) {
+        html += `<div style="grid-column:1/-1; color:var(--muted); margin-bottom:-8px;"><strong>Secondary ML probabilities</strong></div>`;
+        html += Object.entries(secondary).map(([k, v]) => mlProbCard(k, v)).join('');
+      }
+      $('mlProbs').innerHTML = html;
+
+      const fi = p.ml_feature_importance || [];
+      if (fi.length) {
+        $('featureImportance').style.display = 'block';
+        $('featureImportanceTable').querySelector('tbody').innerHTML = fi.slice(0, 10).map(r => `<tr><td>${r.feature}</td><td>${(r.importance*100).toFixed(2)}%</td></tr>`).join('');
+      } else {
+        $('featureImportance').style.display = 'none';
+      }
+
+      let agreement = 'No ML model loaded';
+      if (p.ml_available) {
+        const ruleDir = (p.primary_bucket || '').toLowerCase().replace(' ', '');
+        const mlBest = Object.keys(primary).reduce((a, b) => primary[a] >= primary[b] ? a : b, Object.keys(primary)[0] || '');
+        const mlSecBest = Object.keys(secondary).length ? Object.keys(secondary).reduce((a, b) => secondary[a] >= secondary[b] ? a : b, Object.keys(secondary)[0]) : '';
+        const agreePrimary = ruleDir === (mlBest || '').toLowerCase().replace(' ', '');
+        const agreeSecondary = (p.secondary_bucket || '').toLowerCase().replace(/ /g, '') === (mlSecBest || '').toLowerCase().replace(/ /g, '');
+        if (p.primary_bucket !== 'Neutral') {
+          agreement = agreePrimary ? 'Rule and ML agree (' + mlBest + ')' : 'Rule and ML disagree (ML: ' + mlBest + ')';
+        } else if (p.secondary_bucket && p.secondary_bucket !== 'True Neutral') {
+          agreement = agreeSecondary ? 'Rule and ML agree (' + mlSecBest + ')' : 'Rule and ML disagree (ML: ' + mlSecBest + ')';
+        } else {
+          agreement = 'ML consensus: ' + (mlBest || 'neutral');
+        }
+      }
+      $('mlAgreement').textContent = 'Rule / ML agreement: ' + agreement;
+    }
+
     function renderPrediction(data) {
       const p = data.prediction || data;
       const probs = p.probabilities;
@@ -140,6 +215,7 @@
         <div class="card"><h2>Mid (0.3–0.5%)</h2><div class="big" style="color:var(--mid)">${(probs.mid*100).toFixed(1)}%</div><div class="bar"><div class="bar-fill" style="width:${probs.mid*100}%;background:var(--mid)"></div></div></div>
         <div class="card"><h2>High (&gt;0.5%)</h2><div class="big" style="color:var(--high)">${(probs.high*100).toFixed(1)}%</div><div class="bar"><div class="bar-fill" style="width:${probs.high*100}%;background:var(--high)"></div></div></div>
       `;
+      renderMl(p);
       $('model').textContent = p.model || 'Primary';
       $('primaryBucket').textContent = `Primary bucket: ${p.primary_bucket || p.bucket || '-'} (score ${(p.primary_score || 0).toFixed(2)})`;
       const secEl = $('secondaryBucket');
@@ -149,6 +225,7 @@
       } else {
         secEl.style.display = 'none';
       }
+      $('ruleScore').textContent = `Rule score: primary ${(p.primary_score || 0).toFixed(2)}, secondary ${(p.secondary_score || 0).toFixed(2)}`;
       $('confidence').textContent = `Confidence: ${(p.confidence*100).toFixed(1)}%`;
       $('generated').textContent = `Generated: ${fmtAest(p.generated_at)}`;
       $('dataAsOf').textContent = `Data as of: ${fmtAest(p.data_as_of || p.features.fetched_at)} (latest available)`;

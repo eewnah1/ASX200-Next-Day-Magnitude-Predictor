@@ -611,6 +611,15 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
         compute_distance_from_high(asx_close, days=50) if len(asx_close) >= 50 else None
     )
     ath_score = score_ath_distance(ath_distance)
+    asx_1d_return = None
+    asx_2d_return = None
+    asx_3d_return = None
+    if len(asx_close) >= 2 and asx_close[-2] != 0:
+        asx_1d_return = (asx_close[-1] - asx_close[-2]) / asx_close[-2] * 100.0
+    if len(asx_close) >= 3 and asx_close[-3] != 0:
+        asx_2d_return = (asx_close[-1] - asx_close[-3]) / asx_close[-3] * 100.0
+    if len(asx_close) >= 4 and asx_close[-4] != 0:
+        asx_3d_return = (asx_close[-1] - asx_close[-4]) / asx_close[-4] * 100.0
     index_5d_return = None
     if len(asx_close) >= 6 and asx_close[-6] != 0:
         index_5d_return = (asx_close[-1] - asx_close[-6]) / asx_close[-6] * 100.0
@@ -627,6 +636,9 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
     feats["high_20d_distance_pct"] = high_20d_distance
     feats["high_50d_distance_pct"] = high_50d_distance
     feats["ath_score"] = ath_score
+    feats["asx_1d_return_pct"] = asx_1d_return
+    feats["asx_2d_return_pct"] = asx_2d_return
+    feats["asx_3d_return_pct"] = asx_3d_return
     feats["index_5d_return_pct"] = index_5d_return
     feats["momentum_exhaustion_score"] = momentum_exhaustion
     feats["bollinger_position"] = bollinger_position

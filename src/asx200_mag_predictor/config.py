@@ -58,6 +58,12 @@ class Settings(BaseSettings):
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    @property
+    def ml_model_dir(self) -> Path:
+        path = self.data_dir / "ml_models"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
 
 @lru_cache
 def get_settings() -> Settings:

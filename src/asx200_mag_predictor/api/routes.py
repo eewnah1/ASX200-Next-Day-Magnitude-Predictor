@@ -139,6 +139,20 @@ async def calendar() -> dict[str, Any]:
     }
 
 
+@router.post("/train-ml")
+async def train_ml() -> dict[str, Any]:
+    """Train the hybrid ML models on historical data."""
+    from asx200_mag_predictor.scoring.ml import MLTrainer
+
+    try:
+        trainer = MLTrainer(settings=get_settings())
+        trainer.run()
+        return {"status": "ok", "message": "ML models trained and saved"}
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("ML training failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.post("/run-daily")
 async def run_daily() -> dict[str, Any]:
     """Manual trigger of the daily job."""

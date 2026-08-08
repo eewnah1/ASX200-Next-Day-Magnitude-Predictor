@@ -36,6 +36,7 @@ from asx200_mag_predictor.scoring.features import (
     score_heavyweight_idio,
     score_housing_credit_pulse,
 )
+from asx200_mag_predictor.scoring.ml import HybridML
 from asx200_mag_predictor.timezone import now_sydney
 
 logger = get_logger(__name__)
@@ -143,6 +144,7 @@ class ScoringEngine:
         if total > 0:
             self.weights = {k: v / total for k, v in self.weights.items()}
         self.temperature = 0.85
+        self.hybrid_ml = HybridML(self.settings.ml_model_dir, self.settings)
 
     def predict(
         self,
@@ -160,36 +162,79 @@ class ScoringEngine:
         # Legacy four-bucket probability distribution is retained for display.
         probs, factor_breakdown = self._legacy_probabilities(fv)
 
-        # Model 1: primary high-conviction large-move classifier.
-        primary_contributions, primary_score, primary_bucket = self._primary_model(fv)
-
-        # Model 2: secondary neutral-zone bias extractor (only if Model 1 is Neutral).
-        secondary_contributions, secondary_score, secondary_bucket = self._secondary_model(
-            fv, primary_bucket
+        # Model 1: primary high-conviction large-move classifier (rule + ML hybrid).
+        primary_contributions, primary_score, primary_bucket_rule = self._primary_model(fv)
+        ml_primary_probs = self.hybrid_ml.primary_probs(fv)
+        primary_bucket, primary_fallback = self._hybrid_primary_bucket(
+            primary_score, ml_primary_probs, fv, primary_bucket_rule
         )
+
+        # Model 2: secondary neutral-zone bias extractor (only if primary is Neutral).
+        secondary_contributions: list[FactorContribution] = []
+        secondary_score = 0.0
+        secondary_bucket: str | None = None
+        ml_secondary_probs: dict[str, float] | None = None
+        secondary_fallback: str | None = None
+        if primary_bucket == "Neutral":
+            secondary_contributions, secondary_score, secondary_bucket_rule = self._secondary_model(
+                fv, primary_bucket
+            )
+            ml_secondary_probs = self.hybrid_ml.secondary_probs(fv)
+            secondary_bucket, secondary_fallback = self._hybrid_secondary_bucket(
+                secondary_score, ml_secondary_probs, secondary_bucket_rule
+            )
 
         factor_contributions = primary_contributions + secondary_contributions
 
-        # The primary bucket is used for calibration and as the headline bucket.
+        # The primary bucket is used as the headline bucket.
         # The UI will display the secondary bucket when Model 2 is active.
         model = self._active_model_name(primary_bucket, secondary_bucket)
-        confidence = self._compute_two_model_confidence(
-            primary_bucket, primary_score, secondary_bucket, secondary_score, fv
+        confidence = self._hybrid_confidence(
+            primary_bucket,
+            primary_score,
+            ml_primary_probs,
+            secondary_bucket,
+            secondary_score,
+            ml_secondary_probs,
+            fv,
         )
         degraded, degraded_sources = self._degraded_status(fv, flags)
 
+        ml_available = self.hybrid_ml.available and ml_primary_probs is not None
+        fallback_reason = None
+        if not ml_available:
+            fallback_reason = (
+                primary_fallback or secondary_fallback or "ML models not trained or unavailable"
+            )
+
         notes: list[str] = []
         notes.append(f"Active model: {model}; primary bucket: {primary_bucket}")
-        if primary_bucket == "Neutral" and secondary_bucket and secondary_bucket != "True Neutral":
+        if ml_available and ml_primary_probs:
             notes.append(
-                f"Secondary model selected {secondary_bucket} (score {secondary_score:.2f})."
+                f"ML primary probabilities: "
+                f"Large Down {ml_primary_probs.get('Large Down', 0):.0%}, "
+                f"Neutral {ml_primary_probs.get('Neutral', 0):.0%}, "
+                f"Large Up {ml_primary_probs.get('Large Up', 0):.0%}"
             )
         if primary_bucket != "Neutral":
             notes.append(
-                f"Primary model {primary_bucket} (score {primary_score:.2f}); "
+                f"Primary model {primary_bucket} (rule score {primary_score:.2f}); "
                 f"gating RSI={_fmt_pct(fv.rsi_14, unit='index')}, "
                 f"ATH={_fmt_pct(fv.ath_distance_pct)}"
             )
+        if primary_bucket == "Neutral" and secondary_bucket and secondary_bucket != "True Neutral":
+            notes.append(
+                f"Secondary model selected {secondary_bucket} (rule score {secondary_score:.2f})."
+            )
+            if ml_available and ml_secondary_probs:
+                notes.append(
+                    f"ML secondary probabilities: "
+                    f"Mild Bearish {ml_secondary_probs.get('Mild Bearish Bias', 0):.0%}, "
+                    f"True Neutral {ml_secondary_probs.get('True Neutral', 0):.0%}, "
+                    f"Mild Bullish {ml_secondary_probs.get('Mild Bullish Bias', 0):.0%}"
+                )
+        if fallback_reason:
+            notes.append(f"ML fallback: {fallback_reason}; using rule-based output.")
         if degraded:
             notes.append(f"Degraded prediction – missing: {', '.join(degraded_sources)}.")
 
@@ -218,6 +263,13 @@ class ScoringEngine:
             secondary_bucket=secondary_bucket,
             primary_score=round(primary_score, 4),
             secondary_score=round(secondary_score, 4),
+            ml_available=ml_available,
+            ml_probabilities={
+                "primary": ml_primary_probs or {},
+                "secondary": ml_secondary_probs or {},
+            },
+            ml_feature_importance=self.hybrid_ml.feature_importance(top=10),
+            ml_fallback_reason=fallback_reason,
         )
 
     # ------------------------------------------------------------------ helpers
@@ -844,20 +896,84 @@ class ScoringEngine:
             return "Secondary (True Neutral)"
         return "Primary"
 
-    def _compute_two_model_confidence(
+    def _hybrid_primary_bucket(
+        self,
+        primary_score: float,
+        ml_probs: dict[str, float] | None,
+        fv: FeatureVector,
+        rule_bucket: str,
+    ) -> tuple[str, str | None]:
+        """Combine rule score and ML probabilities for the primary bucket."""
+        if ml_probs is None:
+            return rule_bucket, "ML primary model not available"
+
+        p_large_up = ml_probs.get("Large Up", 0.0)
+        p_large_down = ml_probs.get("Large Down", 0.0)
+
+        if (primary_score >= 2.0 and p_large_up >= 0.55) or p_large_up >= 0.70:
+            return "Large Up", None
+        if (primary_score <= -2.0 and p_large_down >= 0.55) or p_large_down >= 0.70:
+            return "Large Down", None
+        return "Neutral", None
+
+    def _hybrid_secondary_bucket(
+        self,
+        secondary_score: float,
+        ml_probs: dict[str, float] | None,
+        rule_bucket: str | None,
+    ) -> tuple[str | None, str | None]:
+        """Combine secondary rule score and ML probabilities."""
+        if ml_probs is None:
+            return rule_bucket, "ML secondary model not available"
+
+        p_bull = ml_probs.get("Mild Bullish Bias", 0.0)
+        p_bear = ml_probs.get("Mild Bearish Bias", 0.0)
+
+        # Short-term rule support must agree with the ML direction.
+        if p_bull >= 0.60 and secondary_score >= 0.4:
+            return "Mild Bullish Bias", None
+        if p_bear >= 0.60 and secondary_score <= -0.4:
+            return "Mild Bearish Bias", None
+        return "True Neutral", None
+
+    def _hybrid_confidence(
         self,
         primary_bucket: str,
         primary_score: float,
+        ml_primary_probs: dict[str, float] | None,
         secondary_bucket: str | None,
         secondary_score: float,
+        ml_secondary_probs: dict[str, float] | None,
         fv: FeatureVector,
     ) -> float:
-        """Confidence reflects distance from neutral and data quality."""
+        """Confidence reflects agreement between rule and ML plus data quality."""
         if primary_bucket != "Neutral":
-            base_conf = min(1.0, max(0.55, abs(primary_score) / 3.0))
+            ml_prob = 0.0
+            if ml_primary_probs:
+                ml_prob = ml_primary_probs.get(primary_bucket, 0.0)
+            rule_conf = min(1.0, abs(primary_score) / 3.0)
+            base_conf = 0.55 + 0.45 * max(ml_prob, rule_conf)
+            ml_bucket = (
+                max(ml_primary_probs, key=ml_primary_probs.get)
+                if ml_primary_probs
+                else primary_bucket
+            )
+            if ml_bucket != primary_bucket:
+                base_conf *= 0.85
         else:
             if secondary_bucket and secondary_bucket != "True Neutral":
-                base_conf = min(0.85, 0.55 + abs(secondary_score) / 2.0)
+                ml_prob = 0.0
+                if ml_secondary_probs:
+                    ml_prob = ml_secondary_probs.get(secondary_bucket, 0.0)
+                rule_conf = min(0.85, 0.55 + abs(secondary_score) / 2.0)
+                base_conf = 0.5 + 0.4 * max(ml_prob, rule_conf)
+                ml_bucket = (
+                    max(ml_secondary_probs, key=ml_secondary_probs.get)
+                    if ml_secondary_probs
+                    else secondary_bucket
+                )
+                if ml_bucket != secondary_bucket:
+                    base_conf *= 0.85
             else:
                 base_conf = 0.5
 
