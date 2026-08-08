@@ -108,6 +108,12 @@ class ScoringEngine:
                 self.settings.china_steel_property_weight, 0.0, 1.0, 0.08
             ),
             "heavyweight_idio": _clamp(self.settings.heavyweight_idio_weight, 0.0, 1.0, 0.08),
+            "rsi": _clamp(self.settings.rsi_weight, 0.0, 1.0, 0.10),
+            "ath_distance": _clamp(self.settings.ath_distance_weight, 0.0, 1.0, 0.10),
+            "momentum_exhaustion": _clamp(
+                self.settings.momentum_exhaustion_weight, 0.0, 1.0, 0.08
+            ),
+            "bollinger": _clamp(self.settings.bollinger_weight, 0.0, 1.0, 0.05),
         }
         # Normalise weights so they behave like relative allocations.
         total = sum(self.weights.values())
@@ -138,6 +144,10 @@ class ScoringEngine:
         hc_delta, hc_high = self._housing_credit_delta(fv)
         china_delta, china_high = self._china_steel_property_delta(fv)
         hw_delta, hw_high = self._heavyweight_idio_delta(fv)
+        rsi_delta, rsi_high = self._rsi_delta(fv)
+        ath_delta, ath_high = self._ath_distance_delta(fv)
+        mom_delta, mom_high = self._momentum_exhaustion_delta(fv)
+        boll_delta, boll_high = self._bollinger_delta(fv)
 
         baseline_probs = VOL_BASELINES.get(fv.vol_regime or 1, VOL_BASELINES[1])
         baseline_logits = np.log(np.maximum(baseline_probs, 1e-9))
@@ -152,6 +162,10 @@ class ScoringEngine:
         combined += self.weights["housing_credit"] * hc_delta
         combined += self.weights["china_steel_property"] * china_delta
         combined += self.weights["heavyweight_idio"] * hw_delta
+        combined += self.weights["rsi"] * rsi_delta
+        combined += self.weights["ath_distance"] * ath_delta
+        combined += self.weights["momentum_exhaustion"] * mom_delta
+        combined += self.weights["bollinger"] * boll_delta
 
         abs_probs = _softmax(combined, temperature=self.temperature)
         abs_probs = (abs_probs + 1e-4) / (abs_probs + 1e-4).sum()
@@ -192,6 +206,10 @@ class ScoringEngine:
             hc_high,
             china_high,
             hw_high,
+            rsi_high,
+            ath_high,
+            mom_high,
+            boll_high,
         )
 
         confidence = self._compute_confidence(probs, fv)
@@ -402,22 +420,60 @@ class ScoringEngine:
         delta = np.array([low, -low - high, high], dtype=float)
         return delta, high
 
+    def _rsi_delta(self, fv: FeatureVector) -> tuple[np.ndarray, float]:
+        """RSI overbought/oversold adds mean-reversion pressure."""
+        score = _clamp(fv.rsi_score, -2.0, 2.0, 0.0)
+        high = _clamp(score / 2.5, -0.45, 0.45, 0.0)
+        low = -high * 0.60
+        delta = np.array([low, -low - high, high], dtype=float)
+        return delta, high
+
+    def _ath_distance_delta(self, fv: FeatureVector) -> tuple[np.ndarray, float]:
+        """Distance from all-time / trailing highs creates profit-taking risk."""
+        score = _clamp(fv.ath_score, -2.0, 2.0, 0.0)
+        high = _clamp(score / 2.5, -0.45, 0.45, 0.0)
+        low = -high * 0.60
+        delta = np.array([low, -low - high, high], dtype=float)
+        return delta, high
+
+    def _momentum_exhaustion_delta(self, fv: FeatureVector) -> tuple[np.ndarray, float]:
+        """Strong run + RSI extreme can trigger profit-taking or snap-back.
+
+        The profit-taking combo (near ATH + overbought RSI + strong run) is blended
+        in here to give it extra magnitude/direction impact.
+        """
+        mom = _clamp(fv.momentum_exhaustion_score, -2.0, 2.0, 0.0)
+        combo = _clamp(fv.profit_taking_combo_score or 0.0, -2.0, 0.0, 0.0)
+        score = _clamp(mom + combo, -3.5, 3.5, 0.0)
+        high = _clamp(score / 3.0, -0.60, 0.60, 0.0)
+        low = -high * 0.60
+        delta = np.array([low, -low - high, high], dtype=float)
+        return delta, high
+
+    def _bollinger_delta(self, fv: FeatureVector) -> tuple[np.ndarray, float]:
+        """Bollinger Band position flags overextension."""
+        score = _clamp(fv.bollinger_score, -1.0, 1.0, 0.0)
+        high = _clamp(score / 1.5, -0.35, 0.35, 0.0)
+        low = -high * 0.60
+        delta = np.array([low, -low - high, high], dtype=float)
+        return delta, high
+
     def _direction_score(self, fv: FeatureVector) -> float:
         """Estimate the signed probability of a down day (< 0%)."""
         score = 0.0
 
         alignment = _clamp(fv.cross_asset_alignment_score, -1.0, 1.0, 0.0)
-        score -= 0.40 * alignment
+        score -= 0.35 * alignment
 
         session_return = _clamp(fv.asx_open_to_now_return_pct, -2.0, 2.0, 0.0)
-        score -= 0.20 * (session_return / 0.5)
+        score -= 0.18 * (session_return / 0.5)
 
         spi_combined = 0.0
         if fv.spi_basis_pct is not None:
             spi_combined += _clamp(fv.spi_basis_pct, -2.0, 2.0, 0.0)
         if fv.spi_momentum_pct is not None:
             spi_combined += _clamp(fv.spi_momentum_pct, -3.0, 3.0, 0.0)
-        score -= 0.12 * _clamp(spi_combined / 2.0, -1.0, 1.0, 0.0)
+        score -= 0.10 * _clamp(spi_combined / 2.0, -1.0, 1.0, 0.0)
 
         vix_change = _clamp(fv.vix_change_pct, -10.0, 10.0, 0.0)
         score -= 0.04 * _clamp(vix_change / 5.0, -1.0, 1.0, 0.0)
@@ -425,18 +481,28 @@ class ScoringEngine:
         us10y_change = _clamp(fv.us_10y_change_bps, -20.0, 20.0, 0.0)
         score -= 0.04 * _clamp(us10y_change / 20.0, -1.0, 1.0, 0.0)
 
-        # New high-priority factors
+        # Sector / fundamental factors
         fvm = _clamp(fv.financials_vs_materials_score, -2.0, 2.0, 0.0)
-        score -= 0.14 * fvm
+        score -= 0.12 * fvm
 
         hc = _clamp(fv.housing_credit_pulse_score, -2.0, 2.0, 0.0)
-        score -= 0.12 * hc
+        score -= 0.10 * hc
 
         china = _clamp(fv.china_steel_property_score, -2.5, 2.5, 0.0)
-        score -= 0.10 * china
+        score -= 0.08 * china
 
         hw = _clamp(fv.heavyweight_idio_score, -2.5, 2.5, 0.0)
-        score -= 0.10 * hw
+        score -= 0.08 * hw
+
+        # Technical indicators
+        tech = (
+            _clamp(fv.rsi_score, -2.0, 2.0, 0.0)
+            + _clamp(fv.ath_score, -2.0, 2.0, 0.0)
+            + _clamp(fv.momentum_exhaustion_score, -2.0, 2.0, 0.0)
+            + _clamp(fv.bollinger_score, -1.0, 1.0, 0.0)
+            + _clamp(fv.profit_taking_combo_score or 0.0, -2.0, 2.0, 0.0)
+        )
+        score -= 0.18 * _clamp(tech, -4.0, 4.0, 0.0)
 
         return _clamp(score, -3.0, 3.0, 0.0)
 
@@ -494,6 +560,10 @@ class ScoringEngine:
         hc_high: float,
         china_high: float,
         hw_high: float,
+        rsi_high: float,
+        ath_high: float,
+        mom_high: float,
+        boll_high: float,
     ) -> list[FactorContribution]:
         """Build the human-readable factor contribution list."""
         # 1. US Equity Lead
@@ -708,6 +778,68 @@ class ScoringEngine:
                     )
                     if fv.heavyweight_idio_return_pct is not None
                     else "No CBA/BHP data"
+                ),
+            ),
+            FactorContribution(
+                name="RSI (14) Overbought / Oversold",
+                raw_value=fv.rsi_14,
+                raw_unit="index",
+                direction=_direction_label(fv.rsi_score or 0.0),
+                weight=round(self.weights["rsi"], 4),
+                score=round(rsi_high * self.weights["rsi"], 4),
+                note=(
+                    f"RSI {fv.rsi_14:.1f}"
+                    if fv.rsi_14 is not None
+                    else "No RSI data"
+                ),
+            ),
+            FactorContribution(
+                name="Distance from All-Time / Trailing High",
+                raw_value=fv.ath_distance_pct,
+                raw_unit="%",
+                direction=_direction_label(fv.ath_score or 0.0),
+                weight=round(self.weights["ath_distance"], 4),
+                score=round(ath_high * self.weights["ath_distance"], 4),
+                note=(
+                    f"ATH distance {fv.ath_distance_pct:+.2f}%, "
+                    f"20d high {fv.high_20d_distance_pct:+.2f}%, "
+                    f"50d high {fv.high_50d_distance_pct:+.2f}%"
+                    if fv.ath_distance_pct is not None
+                    else "No price history"
+                ),
+            ),
+            FactorContribution(
+                name="Short-term Momentum Exhaustion",
+                raw_value=fv.index_5d_return_pct,
+                raw_unit="%",
+                direction=_direction_label(fv.momentum_exhaustion_score or 0.0),
+                weight=round(self.weights["momentum_exhaustion"], 4),
+                score=round(mom_high * self.weights["momentum_exhaustion"], 4),
+                note=(
+                    (
+                        f"5d return {fv.index_5d_return_pct:+.2f}%"
+                        + (
+                            " – profit-taking combo triggered"
+                            if fv.profit_taking_combo_score
+                            and fv.profit_taking_combo_score < 0
+                            else ""
+                        )
+                    )
+                    if fv.index_5d_return_pct is not None
+                    else "No 5d return data"
+                ),
+            ),
+            FactorContribution(
+                name="Bollinger Band Position",
+                raw_value=fv.bollinger_position,
+                raw_unit="std",
+                direction=_direction_label(fv.bollinger_score or 0.0),
+                weight=round(self.weights["bollinger"], 4),
+                score=round(boll_high * self.weights["bollinger"], 4),
+                note=(
+                    f"price {fv.bollinger_position:+.2f}σ vs 20-day band"
+                    if fv.bollinger_position is not None
+                    else "No Bollinger data"
                 ),
             ),
             FactorContribution(

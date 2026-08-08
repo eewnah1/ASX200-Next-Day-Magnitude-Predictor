@@ -95,6 +95,19 @@ class FeatureVector(BaseModel):
     heavyweight_idio_score: float | None = None
     heavyweight_idio_news_boost: float = 0.0
 
+    # Technical indicators
+    rsi_14: float | None = None
+    rsi_score: float | None = None
+    ath_distance_pct: float | None = None
+    high_20d_distance_pct: float | None = None
+    high_50d_distance_pct: float | None = None
+    ath_score: float | None = None
+    index_5d_return_pct: float | None = None
+    momentum_exhaustion_score: float | None = None
+    bollinger_position: float | None = None
+    bollinger_score: float | None = None
+    profit_taking_combo_score: float | None = None
+
     # Metadata
     fetched_at: datetime = Field(default_factory=now_sydney)
     data_as_of: datetime | None = None  # timestamp of the latest available market data

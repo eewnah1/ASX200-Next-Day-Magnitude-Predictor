@@ -235,7 +235,8 @@ class YFinanceClient:
         self.settings = settings or get_settings()
 
     def asx_cash(self) -> FetchResult:
-        df = _yf_download(ASX_CASH_TICKERS, period="30d", interval="1d")
+        # 120d of daily bars gives enough history for 50-day highs and 14-day RSI.
+        df = _yf_download(ASX_CASH_TICKERS, period="120d", interval="1d")
         series = _extract_series(df)
         if not series:
             return FetchResult(

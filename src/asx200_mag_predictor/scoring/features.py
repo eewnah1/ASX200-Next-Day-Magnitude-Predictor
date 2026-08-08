@@ -225,6 +225,123 @@ def score_heavyweight_idio(
     return score
 
 
+def compute_rsi(closes: list[float], window: int = 14) -> float | None:
+    """Simple RSI from a list of closes."""
+    if len(closes) < window + 1:
+        return None
+    gains = 0.0
+    losses = 0.0
+    for i in range(-window, 0):
+        change = closes[i] - closes[i - 1]
+        if change > 0:
+            gains += change
+        else:
+            losses += abs(change)
+    avg_gain = gains / window
+    avg_loss = losses / window
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    return 100.0 - (100.0 / (1.0 + rs))
+
+
+def score_rsi(rsi: float | None) -> float | None:
+    """Map RSI 14 to a directional score (positive = oversold/bullish)."""
+    if rsi is None:
+        return None
+    if rsi > 70:
+        return -1.5
+    if rsi > 60:
+        return -0.5
+    if rsi >= 40:
+        return 0.0
+    if rsi >= 30:
+        return 0.5
+    return 1.5
+
+
+def compute_distance_from_high(closes: list[float], days: int | None = None) -> float | None:
+    """Return percent distance from the most recent close to a trailing high.
+
+    days=None uses the all-time high in the supplied series.
+    """
+    if not closes:
+        return None
+    if days is not None and len(closes) < days:
+        return None
+    window = closes[-days:] if days else closes
+    high = max(window)
+    last = closes[-1]
+    if high == 0:
+        return None
+    return (last - high) / high * 100.0
+
+
+def score_ath_distance(distance_pct: float | None) -> float | None:
+    """Profit-taking risk based on proximity to all-time / trailing highs."""
+    if distance_pct is None:
+        return None
+    if distance_pct > -0.5:
+        return -1.5
+    if distance_pct > -1.5:
+        return -0.8
+    if distance_pct > -3.0:
+        return -0.3
+    return 0.0
+
+
+def compute_bollinger_position(
+    closes: list[float], window: int = 20, num_std: float = 2.0
+) -> float | None:
+    """Z-score of the last close within a 20-day, 2-std Bollinger Band."""
+    if len(closes) < window:
+        return None
+    window_closes = closes[-window:]
+    sma = mean(window_closes)
+    variance = sum((x - sma) ** 2 for x in window_closes) / window
+    std = variance ** 0.5
+    if std == 0:
+        return None
+    return (closes[-1] - sma) / std
+
+
+def score_bollinger(position: float | None) -> float | None:
+    """Map Bollinger position to a mean-reversion score."""
+    if position is None:
+        return None
+    if position > 2.0:
+        return -0.7
+    if position < -2.0:
+        return 0.7
+    return 0.0
+
+
+def compute_momentum_exhaustion(
+    rsi: float | None, index_5d_return_pct: float | None
+) -> float | None:
+    """Extra profit-taking or bounce potential when a run coincides with RSI extremes."""
+    if rsi is None or index_5d_return_pct is None:
+        return None
+    if index_5d_return_pct > 2.5 and rsi > 65:
+        return -1.0
+    if index_5d_return_pct < -2.5 and rsi < 35:
+        return 1.0
+    return 0.0
+
+
+def compute_profit_taking_combo(
+    rsi: float | None,
+    ath_distance_pct: float | None,
+    index_5d_return_pct: float | None,
+) -> float:
+    """Significant mean-reversion / profit-taking surge when overbought + near ATH + strong run."""
+    if rsi is None or ath_distance_pct is None or index_5d_return_pct is None:
+        return 0.0
+    if rsi > 70 and ath_distance_pct > -0.5 and index_5d_return_pct > 2.5:
+        return -1.5
+    return 0.0
+
+
 @dataclass
 class RawMarketData:
     """Container produced by data fetchers."""
@@ -460,6 +577,42 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
     )
     if not hw:
         flags.heavyweight_idio = _source_flag(statuses.get("heavyweight_idio"))
+
+    # Technical indicators (derived from ASX cash closes)
+    rsi = compute_rsi(asx_close) if len(asx_close) >= 15 else None
+    rsi_score = score_rsi(rsi)
+    ath_distance = (
+        compute_distance_from_high(asx_close) if len(asx_close) >= 2 else None
+    )
+    high_20d_distance = (
+        compute_distance_from_high(asx_close, days=20) if len(asx_close) >= 20 else None
+    )
+    high_50d_distance = (
+        compute_distance_from_high(asx_close, days=50) if len(asx_close) >= 50 else None
+    )
+    ath_score = score_ath_distance(ath_distance)
+    index_5d_return = None
+    if len(asx_close) >= 6 and asx_close[-6] != 0:
+        index_5d_return = (asx_close[-1] - asx_close[-6]) / asx_close[-6] * 100.0
+    momentum_exhaustion = compute_momentum_exhaustion(rsi, index_5d_return)
+    bollinger_position = compute_bollinger_position(asx_close) if len(asx_close) >= 20 else None
+    bollinger_score = score_bollinger(bollinger_position)
+    profit_taking_combo = compute_profit_taking_combo(rsi, ath_distance, index_5d_return)
+
+    feats["rsi_14"] = rsi
+    feats["rsi_score"] = rsi_score
+    feats["ath_distance_pct"] = ath_distance
+    feats["high_20d_distance_pct"] = high_20d_distance
+    feats["high_50d_distance_pct"] = high_50d_distance
+    feats["ath_score"] = ath_score
+    feats["index_5d_return_pct"] = index_5d_return
+    feats["momentum_exhaustion_score"] = momentum_exhaustion
+    feats["bollinger_position"] = bollinger_position
+    feats["bollinger_score"] = bollinger_score
+    feats["profit_taking_combo_score"] = profit_taking_combo
+
+    if not asx_close:
+        flags.asx_cash = _source_flag(statuses.get("asx_cash"))
 
     # SPI basis
     if raw.spi_futures and raw.asx_cash:

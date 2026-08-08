@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     china_steel_property_weight: float = 0.08
     heavyweight_idio_weight: float = 0.08
 
+    rsi_weight: float = 0.10
+    ath_distance_weight: float = 0.10
+    momentum_exhaustion_weight: float = 0.08
+    bollinger_weight: float = 0.05
+
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     ui_port: int = 8501
