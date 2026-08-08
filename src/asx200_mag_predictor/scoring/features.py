@@ -7,7 +7,8 @@ missing fields fall back to neutral defaults and raise data-quality flags.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from statistics import mean
 from typing import Any
 
@@ -170,12 +171,55 @@ class RawMarketData:
     us_assets: dict[str, Any] | None = None
     calendar: dict[str, Any] | None = None
     volume: dict[str, Any] | None = None
+    source_status: list[dict[str, Any]] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+
+def _status_map(raw: RawMarketData) -> dict[str, dict[str, Any]]:
+    """Map source_status list to a dict keyed by source name."""
+    return {s.get("name", "unknown"): s for s in raw.source_status or []}
+
+
+def _source_flag(status: dict[str, Any] | None) -> str:
+    if not status:
+        return "failed"
+    return status.get("status", "failed")
+
+
+def _latest_success_timestamp(raw: RawMarketData) -> datetime | None:
+    """Return the timestamp of the latest available market data (calendar excluded)."""
+    from zoneinfo import ZoneInfo
+
+    latest: datetime | None = None
+    for s in raw.source_status or []:
+        if s.get("name") == "calendar":
+            continue
+        ts = s.get("last_success_at")
+        if not ts:
+            continue
+        try:
+            dt = datetime.fromisoformat(ts)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+            # Ignore future fetch timestamps so stale/last-available data is shown truthfully.
+            if latest is None or (dt > latest and dt < now_sydney()):
+                latest = dt
+        except Exception:  # noqa: BLE001
+            continue
+    return latest
 
 
 def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]:
     """Transform raw snapshots into a FeatureVector and data-quality flags."""
     flags = DataQualityFlags()
-    feats: dict[str, Any] = {"fetched_at": now_sydney(), "sources": {}}
+    statuses = _status_map(raw)
+    feats: dict[str, Any] = {
+        "fetched_at": now_sydney(),
+        "data_as_of": _latest_success_timestamp(raw),
+        "sources": {},
+        "source_status": raw.source_status or [],
+        "errors": raw.errors or [],
+    }
 
     def _hist(key: str, field: str) -> list[float] | None:
         obj = getattr(raw, key)
@@ -203,7 +247,7 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
     # A-VIX and realised vol
     a_vix_close = _last("a_vix", "close")
     if a_vix_close is None:
-        flags.a_vix = "missing or stale"
+        flags.a_vix = _source_flag(statuses.get("a_vix"))
 
     asx_close = _hist("asx_cash", "close") or []
     asx_high = _hist("asx_cash", "high") or []
@@ -217,18 +261,16 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
         last_price = asx_close[-1]
         if atr_5d and last_price:
             atr_5d_pct = atr_5d / last_price * 100.0
-            # Realised vol estimate: daily stdev of last 5 returns, annualised.
             returns = [
                 (asx_close[i] - asx_close[i - 1]) / asx_close[i - 1] * 100
                 for i in range(-4, 0)
                 if asx_close[i - 1] != 0
             ]
             if len(returns) >= 4:
-
                 stdev = (sum((r - mean(returns)) ** 2 for r in returns) / (len(returns) - 1)) ** 0.5
                 realized_vol_annual = _rule_of_16(stdev)
     else:
-        flags.asx_cash = "missing or stale"
+        flags.asx_cash = _source_flag(statuses.get("asx_cash"))
 
     feats["a_vix"] = a_vix_close
     feats["atr_5d_pct"] = atr_5d_pct
@@ -242,7 +284,7 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
         events_24h = raw.calendar.get("high_impact_24h", 0) or 0
         events_48h = raw.calendar.get("high_impact_48h", 0) or 0
     else:
-        flags.calendar = "missing or stale"
+        flags.calendar = _source_flag(statuses.get("calendar"))
     feats["catalyst_score"] = compute_catalyst_score(events_24h, events_48h)
     feats["high_impact_events_next_24h"] = events_24h
     feats["high_impact_events_next_48h"] = events_48h
@@ -254,6 +296,10 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
 
     us_futures = _change("us_assets", "us_futures_change_pct")
     iron_ore = _change("commodities", "iron_ore_change_pct")
+    gold = _change("commodities", "gold_change_pct")
+    silver = _change("commodities", "silver_change_pct")
+    oil = _change("commodities", "oil_change_pct")
+    copper = _change("commodities", "copper_change_pct")
     aud = _change("fx", "aud_usd_change_pct")
     sp500 = _change("us_assets", "sp500_change_pct")
     nasdaq = _change("us_assets", "nasdaq_change_pct")
@@ -261,10 +307,11 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
     us10y = _change("us_assets", "us_10y_change_bps")
     vix = _change("us_assets", "vix_change_pct")
 
-    if all(v is None for v in [us_futures, iron_ore, aud, sp500, nasdaq, dow, us10y, vix]):
-        flags.us_assets = "missing or stale"
-        flags.commodities = "missing or stale"
-        flags.fx = "missing or stale"
+    core = [us_futures, iron_ore, aud, sp500, nasdaq, dow, us10y, vix]
+    if all(v is None for v in core):
+        flags.us_assets = _source_flag(statuses.get("us_assets"))
+        flags.commodities = _source_flag(statuses.get("commodities"))
+        flags.fx = _source_flag(statuses.get("fx"))
 
     alignment, magnitude = compute_cross_asset_alignment(
         us_futures_change_pct=us_futures,
@@ -278,6 +325,10 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
     )
     feats["us_futures_change_pct"] = us_futures
     feats["iron_ore_change_pct"] = iron_ore
+    feats["gold_change_pct"] = gold
+    feats["silver_change_pct"] = silver
+    feats["oil_change_pct"] = oil
+    feats["copper_change_pct"] = copper
     feats["aud_usd_change_pct"] = aud
     feats["sp500_change_pct"] = sp500
     feats["nasdaq_change_pct"] = nasdaq
@@ -292,12 +343,18 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
         open_to_now = raw.volume.get("asx_open_to_now_return_pct")
         vol_ratio = raw.volume.get("current_volume_vs_20d_avg")
         range_ratio = raw.volume.get("current_range_vs_atr")
+        session_date = raw.volume.get("session_date")
+        fallback = raw.volume.get("fallback")
         feats["asx_open_to_now_return_pct"] = open_to_now
         feats["current_volume_vs_20d_avg"] = vol_ratio
         feats["current_range_vs_atr"] = range_ratio
         feats["asx_session_character"] = classify_session(open_to_now, vol_ratio, range_ratio)
+        if session_date:
+            feats["sources"]["asx_session_date"] = session_date
+        if fallback:
+            feats["sources"]["asx_session_fallback"] = fallback
     else:
-        flags.volume = "missing or stale"
+        flags.volume = _source_flag(statuses.get("volume"))
         feats["asx_session_character"] = "unknown"
 
     # SPI basis
@@ -309,7 +366,25 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
             feats["spi_basis_pct"] = (spi_last - asx_last) / asx_last * 100.0
             if len(spi_series) >= 2 and spi_series[-2] != 0:
                 feats["spi_momentum_pct"] = (spi_last - spi_series[-2]) / spi_series[-2] * 100.0
+            if raw.spi_futures.get("cash_proxy"):
+                flags.spi_futures = "stale"
     else:
-        flags.spi_futures = "missing or stale"
+        flags.spi_futures = _source_flag(statuses.get("spi_futures"))
+
+    # Map source status to flags for downstream consumers.
+    flag_map = {
+        "asx_cash": "asx_cash",
+        "spi_futures": "spi_futures",
+        "a_vix": "a_vix",
+        "commodities": "commodities",
+        "fx": "fx",
+        "us_assets": "us_assets",
+        "calendar": "calendar",
+        "volume": "volume",
+    }
+    for source, flag_key in flag_map.items():
+        st = _source_flag(statuses.get(source))
+        if st != "ok":
+            setattr(flags, flag_key, st)
 
     return FeatureVector(**feats), flags

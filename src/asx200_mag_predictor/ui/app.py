@@ -56,7 +56,7 @@ def _local_predict(notes: str = "") -> dict:
     if notes:
         prediction.notes.append(notes)
     prediction_id = Repository().save_prediction(prediction)
-    return {"prediction_id": prediction_id, "prediction": prediction.model_dump()}
+    return {"prediction_id": prediction_id, "prediction": prediction.model_dump(mode="json")}
 
 
 def _fmt_aest(iso: str) -> str:
@@ -102,34 +102,81 @@ else:
     st.metric("Confidence", f"{confidence:.0%}")
 
     gen = _fmt_aest(latest["generated_at"])
-    st.markdown(f"**Primary bucket:** `{bucket}`  |  Generated: {gen}")
+    data_as_of_raw = latest.get("data_as_of") or latest.get("features", {}).get("fetched_at")
+    data_as_of = _fmt_aest(data_as_of_raw)
+    st.markdown(
+        f"**Primary bucket:** `{bucket}`  |  Generated: {gen}"
+        f"  |  Data as of: {data_as_of} (latest available)"
+    )
 
-    # Factor contribution chart
-    st.subheader("Factor contribution to large-move probability")
-    fb = latest.get("factor_breakdown", {})
-    if fb:
-        fig = go.Figure(
-            go.Bar(
-                x=list(fb.keys()),
-                y=list(fb.values()),
-                marker_color="steelblue",
+    if latest.get("degraded"):
+        missing = ", ".join(latest.get("degraded_sources", []))
+        st.warning(f"Degraded prediction – missing or stale sources: {missing}")
+
+    # Factor contribution table
+    st.subheader("Factor contributions")
+    fc = latest.get("factor_contributions", [])
+    if fc:
+        fc_df = pd.DataFrame(
+            [
+                {
+                    "Factor": f["name"],
+                    "Raw value": f"{f['raw_value']:.2f} {f['raw_unit']}"
+                    if f.get("raw_value") is not None
+                    else "n/a",
+                    "Direction": f.get("direction", "neutral"),
+                    "Weight": f"{f['weight']:.1%}",
+                    "Score": f"{f['score']:.4f}",
+                    "Note": f.get("note", ""),
+                }
+                for f in fc
+            ]
+        )
+        st.dataframe(fc_df, use_container_width=True, hide_index=True)
+    else:
+        fb = latest.get("factor_breakdown", {})
+        if fb:
+            fig = go.Figure(
+                go.Bar(
+                    x=list(fb.keys()),
+                    y=list(fb.values()),
+                    marker_color="steelblue",
+                )
             )
-        )
-        fig.update_layout(
-            yaxis_title="High-bucket logit contribution",
-            xaxis_title="Factor",
-            height=350,
-            margin=dict(t=20, b=40),
-        )
-        st.plotly_chart(fig, use_container_width=True)
+            fig.update_layout(
+                yaxis_title="High-bucket logit contribution",
+                xaxis_title="Factor",
+                height=350,
+                margin=dict(t=20, b=40),
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
     # Data health
     st.subheader("Data source health")
-    flags = latest.get("data_quality_flags", {})
-    flag_df = pd.DataFrame(
-        [{"Source": k, "Status": v} for k, v in flags.items()]
-    )
-    st.dataframe(flag_df, use_container_width=True, hide_index=True)
+    statuses = latest.get("source_status") or latest.get("features", {}).get("source_status", [])
+    if statuses:
+        health_df = pd.DataFrame(
+            [
+                {
+                    "Source": s.get("name"),
+                    "Status": s.get("status"),
+                    "Value": s.get("value") or "-",
+                    "Last update": _fmt_aest(s.get("last_success_at")),
+                }
+                for s in statuses
+            ]
+        )
+        st.dataframe(health_df, use_container_width=True, hide_index=True)
+    else:
+        flags = latest.get("data_quality_flags", {})
+        flag_df = pd.DataFrame([{"Source": k, "Status": v} for k, v in flags.items()])
+        st.dataframe(flag_df, use_container_width=True, hide_index=True)
+
+    errors = latest.get("errors", []) + latest.get("features", {}).get("errors", [])
+    if errors:
+        with st.expander("Debug / Errors"):
+            for err in errors:
+                st.error(err)
 
     # Notes
     with st.expander("Prediction notes"):

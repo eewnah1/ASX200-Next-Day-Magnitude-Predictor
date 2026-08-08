@@ -10,7 +10,7 @@ from asx200_mag_predictor.config import get_settings
 from asx200_mag_predictor.data.fetchers import DataFetcher
 from asx200_mag_predictor.logging_config import get_logger
 from asx200_mag_predictor.scoring.engine import ScoringEngine
-from asx200_mag_predictor.scoring.features import build_features
+from asx200_mag_predictor.scoring.features import RawMarketData, build_features
 from asx200_mag_predictor.storage.repository import Repository
 from asx200_mag_predictor.timezone import now_sydney
 
@@ -30,6 +30,14 @@ def _fetcher() -> DataFetcher:
     return DataFetcher(get_settings())
 
 
+def _fallback_raw() -> RawMarketData:
+    """Return an empty RawMarketData so a degraded prediction can still be made."""
+    return RawMarketData(
+        source_status=[],
+        errors=["All data fetchers failed; using neutral fallback."],
+    )
+
+
 @router.get("/status")
 async def status() -> dict[str, Any]:
     return {
@@ -42,12 +50,28 @@ async def status() -> dict[str, Any]:
 @router.post("/predict", response_model=dict[str, Any])
 async def predict_manual(notes: str = "") -> dict[str, Any]:
     """Trigger a fresh prediction from live data and store it."""
+    fetcher = _fetcher()
+    raw: RawMarketData | None = None
+    fetch_errors: list[str] = []
     try:
-        raw = _fetcher().fetch_all()
+        raw = fetcher.fetch_all()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Live fetch failed; trying cache")
+        fetch_errors.append(f"Live fetch failed: {exc}")
+        raw = fetcher.load_cached_snapshot()
+        if not raw:
+            fetch_errors.append("No cached snapshot available; using fallback")
+            raw = _fallback_raw()
+
+    try:
         features, flags = build_features(raw)
         prediction = _engine().predict(features, flags)
         if notes:
             prediction.notes.append(notes)
+        if fetch_errors:
+            prediction.errors.extend(fetch_errors)
+            prediction.degraded = True
+            prediction.degraded_sources.extend(["fetch"])
         repo = _repo()
         prediction_id = repo.save_prediction(prediction)
         return {"prediction_id": prediction_id, "prediction": prediction.model_dump(mode="json")}
@@ -102,10 +126,17 @@ async def calibration() -> dict[str, Any]:
 
 @router.get("/calendar")
 async def calendar() -> dict[str, Any]:
-    cal = _fetcher().news_calendar.fetch()
-    if not cal:
-        cal = _fetcher().marketaux_calendar.fetch()
-    return cal or {"message": "No calendar data available"}
+    fetcher = _fetcher()
+    result = fetcher.calendar()
+    data = result.data if result.status == "ok" else {}
+    if not data:
+        data = {"message": "No calendar data available"}
+    return {
+        **data,
+        "status": result.status,
+        "error": result.error,
+        "last_success_at": result.last_success_at,
+    }
 
 
 @router.post("/run-daily")

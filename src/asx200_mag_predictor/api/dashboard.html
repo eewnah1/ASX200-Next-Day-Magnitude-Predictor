@@ -19,24 +19,35 @@
     button { background: #3b82f6; color: white; border: none; padding: 12px 20px; border-radius: 8px; font-size: 1rem; cursor: pointer; }
     button:disabled { opacity: 0.6; cursor: not-allowed; }
     .status { margin-top: 12px; color: var(--muted); font-size: 0.9rem; }
-    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 0.9rem; }
     th, td { text-align: left; padding: 8px; border-bottom: 1px solid #334155; }
     th { color: var(--muted); font-weight: 500; }
     .ok { color: var(--low); }
+    .stale { color: var(--mid); }
     .bad { color: var(--high); }
     pre { background: #0b1220; padding: 12px; border-radius: 8px; overflow-x: auto; font-size: 0.85rem; }
     .factor-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155; }
     .error { color: var(--high); }
+    .muted { color: var(--muted); }
+    .degraded-banner { background: #451a1a; color: #fecaca; border: 1px solid #ef4444; border-radius: 8px; padding: 12px; margin-bottom: 16px; }
+    details { background: #0b1220; border-radius: 8px; padding: 12px; margin-top: 16px; }
+    summary { cursor: pointer; color: var(--muted); }
+    .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; margin-left: 8px; text-transform: uppercase; }
+    .tag-bullish { background: #14532d; color: #86efac; }
+    .tag-bearish { background: #450a0a; color: #fecaca; }
+    .tag-neutral { background: #334155; color: #cbd5e1; }
   </style>
 </head>
 <body>
   <h1>ASX200 Next-Day Magnitude Predictor</h1>
-  <div class="subtitle">Predicts the next ASX 200 trading day's signed return bucket.</div>
+  <div class="subtitle">Predicts the next ASX 200 trading day's signed return bucket using the latest available market data.</div>
 
   <div style="margin-bottom:24px;">
     <button id="runBtn" onclick="runPrediction()">Run prediction now</button>
     <div class="status" id="status"></div>
   </div>
+
+  <div id="degraded"></div>
 
   <div class="grid" id="probs"></div>
 
@@ -45,16 +56,17 @@
     <div id="bucket" class="big">-</div>
     <div id="confidence" style="color:var(--muted)">Confidence: -</div>
     <div id="generated" style="color:var(--muted);font-size:0.9rem;margin-top:8px;">Generated: -</div>
+    <div id="dataAsOf" style="color:var(--muted);font-size:0.9rem;margin-top:4px;">Data as of: -</div>
   </div>
 
   <div class="grid">
-    <div class="card">
+    <div class="card" style="grid-column: 1 / -1;">
       <h2>Factor contributions</h2>
-      <div id="factors">No data</div>
+      <table id="factorsTable"><thead><tr><th>Factor</th><th>Raw value</th><th>Direction</th><th>Weight</th><th>Score</th><th>Note</th></tr></thead><tbody></tbody></table>
     </div>
     <div class="card">
       <h2>Data source health</h2>
-      <table id="healthTable"><tbody></tbody></table>
+      <table id="healthTable"><thead><tr><th>Source</th><th>Status</th><th>Value</th><th>Last update</th></tr></thead><tbody></tbody></table>
     </div>
     <div class="card">
       <h2>Calibration</h2>
@@ -66,22 +78,21 @@
     </div>
   </div>
 
+  <details id="errorsPanel" style="display:none;">
+    <summary>Debug / Errors</summary>
+    <pre id="errors"></pre>
+  </details>
+
   <script>
     const API = '/api/v1';
-
     const $ = id => document.getElementById(id);
 
     async function api(path, method='GET', body=null) {
       const ctrl = new AbortController();
-      const to = setTimeout(() => ctrl.abort(), 70000);
+      const to = setTimeout(() => ctrl.abort(), 90000);
       const headers = body ? { 'Content-Type': 'application/json' } : {};
       try {
-        const res = await fetch(API + path, {
-          method,
-          headers,
-          body: body ? JSON.stringify(body) : null,
-          signal: ctrl.signal,
-        });
+        const res = await fetch(API + path, { method, headers, body: body ? JSON.stringify(body) : null, signal: ctrl.signal });
         clearTimeout(to);
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
         return await res.json();
@@ -98,6 +109,21 @@
       } catch { return iso; }
     }
 
+    function tagClass(direction) {
+      const d = (direction || '').toLowerCase();
+      if (d.includes('bull')) return 'tag-bullish';
+      if (d.includes('bear')) return 'tag-bearish';
+      return 'tag-neutral';
+    }
+
+    function statusClass(status) {
+      if (!status) return 'bad';
+      const s = status.toLowerCase();
+      if (s === 'ok') return 'ok';
+      if (s === 'stale') return 'stale';
+      return 'bad';
+    }
+
     function renderPrediction(data) {
       const p = data.prediction || data;
       const probs = p.probabilities;
@@ -110,12 +136,54 @@
       $('bucket').textContent = p.bucket;
       $('confidence').textContent = `Confidence: ${(p.confidence*100).toFixed(1)}%`;
       $('generated').textContent = `Generated: ${fmtAest(p.generated_at)}`;
+      $('dataAsOf').textContent = `Data as of: ${fmtAest(p.data_as_of || p.features.fetched_at)} (latest available)`;
 
-      const fb = p.factor_breakdown || {};
-      $('factors').innerHTML = Object.entries(fb).map(([k,v]) => `<div class="factor-row"><span>${k}</span><span>${typeof v === 'number' ? v.toFixed(4) : v}</span></div>`).join('');
+      if (p.degraded) {
+        $('degraded').innerHTML = `<div class="degraded-banner">Degraded prediction – missing or stale sources: ${p.degraded_sources.join(', ')}</div>`;
+      } else {
+        $('degraded').innerHTML = '';
+      }
 
-      const flags = p.data_quality_flags || {};
-      $('healthTable').querySelector('tbody').innerHTML = Object.entries(flags).map(([k,v]) => `<tr><td>${k}</td><td class="${v==='ok'?'ok':'bad'}">${v}</td></tr>`).join('');
+      const factors = p.factor_contributions || [];
+      if (factors.length) {
+        $('factorsTable').querySelector('tbody').innerHTML = factors.map(f => `
+          <tr>
+            <td>${f.name} <span class="tag ${tagClass(f.direction)}">${f.direction}</span></td>
+            <td>${f.raw_value !== null && f.raw_value !== undefined ? f.raw_value.toFixed(2) + ' ' + (f.raw_unit || '') : 'n/a'}</td>
+            <td>${f.direction}</td>
+            <td>${(f.weight * 100).toFixed(1)}%</td>
+            <td>${f.score.toFixed(4)}</td>
+            <td style="color:var(--muted)">${f.note}</td>
+          </tr>
+        `).join('');
+      } else {
+        const fb = p.factor_breakdown || {};
+        $('factorsTable').querySelector('tbody').innerHTML = Object.entries(fb).map(([k,v]) => `<tr><td>${k}</td><td>${v}</td><td></td><td></td><td></td><td></td></tr>`).join('');
+      }
+
+      const statuses = p.source_status || (p.features && p.features.source_status) || [];
+      if (statuses.length) {
+        $('healthTable').querySelector('tbody').innerHTML = statuses.map(s => `
+          <tr>
+            <td>${s.name}</td>
+            <td class="${statusClass(s.status)}">${s.status}</td>
+            <td style="color:var(--muted)">${s.value || '-'}</td>
+            <td style="color:var(--muted)">${fmtAest(s.last_success_at)}</td>
+          </tr>
+        `).join('');
+      } else {
+        const flags = p.data_quality_flags || {};
+        $('healthTable').querySelector('tbody').innerHTML = Object.entries(flags).map(([k,v]) => `<tr><td>${k}</td><td class="${statusClass(v)}">${v}</td><td>-</td><td>-</td></tr>`).join('');
+      }
+
+      const errors = (p.errors || []).concat(p.features && p.features.errors ? p.features.errors : []);
+      if (errors.length) {
+        $('errorsPanel').style.display = 'block';
+        $('errors').textContent = errors.join('\n');
+      } else {
+        $('errorsPanel').style.display = 'none';
+        $('errors').textContent = '';
+      }
     }
 
     async function loadLatest() {
@@ -152,13 +220,14 @@
     async function runPrediction() {
       const btn = $('runBtn');
       btn.disabled = true;
-      $('status').textContent = 'Fetching market data and scoring (can take ~45s)...';
+      $('status').textContent = 'Fetching market data and scoring (can take ~45s on weekends)...';
       $('status').className = 'status';
       try {
         const data = await api('/predict', 'POST');
         renderPrediction(data);
         $('status').textContent = `Prediction saved: ${data.prediction_id}`;
         loadCalibration();
+        loadCalendar();
       } catch (e) {
         $('status').textContent = 'Error: ' + e.message;
         $('status').className = 'status error';

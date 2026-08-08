@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, Float, ForeignKey, String, create_engine
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, String, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
 from asx200_mag_predictor.config import Settings, get_settings
@@ -23,13 +23,19 @@ class PredictionRecord(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     prediction_for_date: Mapped[datetime] = mapped_column(nullable=False)
     generated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, nullable=False)
+    data_as_of: Mapped[datetime | None] = mapped_column(nullable=True)
     features_json: Mapped[dict] = mapped_column(JSON, default=dict)
     probabilities_json: Mapped[dict] = mapped_column(JSON, default=dict)
     bucket: Mapped[str] = mapped_column(String(20), nullable=False)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     factor_breakdown_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    factor_contributions_json: Mapped[list] = mapped_column(JSON, default=list)
     notes_json: Mapped[list] = mapped_column(JSON, default=list)
     data_quality_flags_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    source_status_json: Mapped[list] = mapped_column(JSON, default=list)
+    errors_json: Mapped[list] = mapped_column(JSON, default=list)
+    degraded: Mapped[bool] = mapped_column(Boolean, default=False)
+    degraded_sources_json: Mapped[list] = mapped_column(JSON, default=list)
 
     actual: Mapped["ActualRecord"] = relationship(back_populates="prediction", uselist=False)
 
@@ -75,8 +81,39 @@ def get_session_maker(engine=None):
     return sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
+def _add_missing_columns(engine) -> None:
+    """Add columns introduced after the initial schema without losing data."""
+    inspector = inspect(engine)
+    for table, additions in {
+        "predictions": [
+            ("data_as_of", "DATETIME"),
+            ("factor_contributions_json", "JSON"),
+            ("source_status_json", "JSON"),
+            ("errors_json", "JSON"),
+            ("degraded", "BOOLEAN"),
+            ("degraded_sources_json", "JSON"),
+        ],
+        "actuals": [
+            ("actual_return_pct", "FLOAT"),
+            ("actual_bucket", "VARCHAR"),
+            ("recorded_at", "DATETIME"),
+        ],
+    }.items():
+        if table not in inspector.get_table_names():
+            continue
+        columns = {c["name"] for c in inspector.get_columns(table)}
+        with engine.begin() as conn:
+            for col, dtype in additions:
+                if col not in columns:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {dtype}"))
+
+
 def init_db(settings: Settings | None = None):
-    """Create tables if they do not exist."""
+    """Create tables if they do not exist and add any missing columns."""
     engine = get_engine(settings)
     Base.metadata.create_all(bind=engine)
+    try:
+        _add_missing_columns(engine)
+    except Exception:  # noqa: BLE001
+        pass
     return engine

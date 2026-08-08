@@ -7,7 +7,16 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from asx200_mag_predictor.models import CalibrationMetrics, Prediction
+from asx200_mag_predictor.models import (
+    BucketProbabilities,
+    CalibrationMetrics,
+    DataQualityFlags,
+    DataSourceStatus,
+    FactorBreakdown,
+    FactorContribution,
+    FeatureVector,
+    Prediction,
+)
 from asx200_mag_predictor.scoring.engine import bucket_from_return
 from asx200_mag_predictor.storage.models import (
     ActualRecord,
@@ -26,7 +35,6 @@ class Repository:
             engine = get_engine(settings)
             self.session = get_session_maker(engine)()
 
-
     def save_prediction(self, prediction: Prediction) -> str:
         if not prediction.id:
             import uuid
@@ -36,13 +44,21 @@ class Repository:
             id=prediction.id,
             prediction_for_date=prediction.prediction_for_date,
             generated_at=prediction.generated_at,
+            data_as_of=prediction.data_as_of,
             features_json=prediction.features.model_dump(mode="json"),
             probabilities_json=prediction.probabilities.model_dump(mode="json"),
             bucket=prediction.bucket,
             confidence=prediction.confidence,
             factor_breakdown_json=prediction.factor_breakdown.model_dump(mode="json"),
+            factor_contributions_json=[
+                fc.model_dump(mode="json") for fc in prediction.factor_contributions
+            ],
             notes_json=prediction.notes,
             data_quality_flags_json=prediction.data_quality_flags.model_dump(mode="json"),
+            source_status_json=[s.model_dump(mode="json") for s in prediction.source_status],
+            errors_json=prediction.errors,
+            degraded=prediction.degraded,
+            degraded_sources_json=prediction.degraded_sources,
         )
         self.session.add(record)
         self.session.commit()
@@ -101,8 +117,6 @@ class Repository:
 
     def calibration_metrics(self) -> CalibrationMetrics:
         """Compute simple hit-rate metrics overall and by vol regime."""
-        from asx200_mag_predictor.storage.models import PredictionRecord
-
         rows = (
             self.session.query(PredictionRecord, ActualRecord)
             .join(ActualRecord, PredictionRecord.id == ActualRecord.prediction_id)
@@ -134,22 +148,23 @@ class Repository:
         )
 
     def _to_prediction(self, record: PredictionRecord) -> Prediction:
-        from asx200_mag_predictor.models import (
-            BucketProbabilities,
-            DataQualityFlags,
-            FactorBreakdown,
-            FeatureVector,
-        )
-
         return Prediction(
             id=record.id,
             prediction_for_date=record.prediction_for_date,
             generated_at=record.generated_at,
+            data_as_of=record.data_as_of,
             features=FeatureVector(**record.features_json),
             probabilities=BucketProbabilities(**record.probabilities_json),
             bucket=record.bucket,
             confidence=record.confidence,
             factor_breakdown=FactorBreakdown(**record.factor_breakdown_json),
-            notes=record.notes_json,
+            factor_contributions=[
+                FactorContribution(**fc) for fc in record.factor_contributions_json or []
+            ],
+            notes=record.notes_json or [],
             data_quality_flags=DataQualityFlags(**record.data_quality_flags_json),
+            source_status=[DataSourceStatus(**s) for s in record.source_status_json or []],
+            errors=record.errors_json or [],
+            degraded=record.degraded if record.degraded is not None else False,
+            degraded_sources=record.degraded_sources_json or [],
         )

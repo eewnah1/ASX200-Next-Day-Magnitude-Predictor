@@ -27,7 +27,9 @@ from asx200_mag_predictor.logging_config import get_logger
 from asx200_mag_predictor.models import (
     BucketProbabilities,
     DataQualityFlags,
+    DataSourceStatus,
     FactorBreakdown,
+    FactorContribution,
     FeatureVector,
     Prediction,
 )
@@ -73,6 +75,20 @@ def _clamp(value: float | None, low: float, high: float, default: float) -> floa
     return max(low, min(high, value))
 
 
+def _direction_label(value: float, bullish: str = "bullish", bearish: str = "bearish") -> str:
+    if value > 0.1:
+        return bullish
+    if value < -0.1:
+        return bearish
+    return "neutral"
+
+
+def _fmt_pct(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:+.2f}%"
+
+
 class ScoringEngine:
     """Predict P(|ASX200 next-day return| in bucket) from a FeatureVector."""
 
@@ -104,15 +120,15 @@ class ScoringEngine:
 
         prediction_for_date = self._resolve_prediction_for(prediction_for)
 
-        # 1. Magnitude model: P(|return| bucket | return >= 0).
-        baseline_probs = VOL_BASELINES.get(fv.vol_regime or 1, VOL_BASELINES[1])
-        baseline_logits = np.log(np.maximum(baseline_probs, 1e-9))
-
+        # Factor-level deltas and raw scores.
         vol_delta, vol_high = self._volatility_delta(fv)
         cat_delta, cat_high = self._catalyst_delta(fv)
         align_delta, align_high = self._alignment_delta(fv)
         sess_delta, sess_high = self._session_delta(fv)
         spi_delta, spi_high = self._spi_delta(fv)
+
+        baseline_probs = VOL_BASELINES.get(fv.vol_regime or 1, VOL_BASELINES[1])
+        baseline_logits = np.log(np.maximum(baseline_probs, 1e-9))
 
         combined = baseline_logits.copy()
         combined += self.weights["volatility"] * vol_delta
@@ -124,23 +140,22 @@ class ScoringEngine:
         abs_probs = _softmax(combined, temperature=self.temperature)
         abs_probs = (abs_probs + 1e-4) / (abs_probs + 1e-4).sum()
 
-        # 2. Direction model: P(return < 0).
         direction_score = self._direction_score(fv)
         p_negative = _sigmoid(direction_score * 2.0)
 
-        # 3. Combine into four signed buckets: negative, low, mid, high.
-        probs = np.array([
-            p_negative,
-            (1.0 - p_negative) * float(abs_probs[0]),
-            (1.0 - p_negative) * float(abs_probs[1]),
-            (1.0 - p_negative) * float(abs_probs[2]),
-        ])
+        probs = np.array(
+            [
+                p_negative,
+                (1.0 - p_negative) * float(abs_probs[0]),
+                (1.0 - p_negative) * float(abs_probs[1]),
+                (1.0 - p_negative) * float(abs_probs[2]),
+            ]
+        )
         probs = probs / probs.sum()
 
         bucket_index = int(np.argmax(probs))
         bucket_label = BUCKET_LABELS[bucket_index]
 
-        confidence = self._compute_confidence(probs, flags)
         factor_breakdown = FactorBreakdown(
             volatility=round(float(vol_high) * self.weights["volatility"], 4),
             catalyst=round(float(cat_high) * self.weights["catalyst"], 4),
@@ -149,6 +164,18 @@ class ScoringEngine:
             spi_basis=round(float(spi_high) * self.weights["spi_basis"], 4),
             direction=round(float(direction_score), 4),
         )
+
+        factor_contributions = self._build_factor_contributions(
+            fv,
+            vol_high,
+            cat_high,
+            align_high,
+            sess_high,
+            spi_high,
+        )
+
+        confidence = self._compute_confidence(probs, fv)
+        degraded, degraded_sources = self._degraded_status(fv, flags)
 
         notes: list[str] = []
         if baseline_probs[-1] > 0.40:
@@ -165,9 +192,12 @@ class ScoringEngine:
             notes.append(
                 f"Bullish direction score {direction_score:.2f} lowers probability of a down day."
             )
+        if degraded:
+            notes.append(f"Degraded prediction – missing: {', '.join(degraded_sources)}.")
 
         return Prediction(
             prediction_for_date=prediction_for_date,
+            data_as_of=fv.data_as_of,
             features=fv,
             probabilities=BucketProbabilities(
                 negative=round(float(probs[0]), 4),
@@ -178,8 +208,13 @@ class ScoringEngine:
             bucket=bucket_label,
             confidence=round(confidence, 4),
             factor_breakdown=factor_breakdown,
+            factor_contributions=factor_contributions,
             notes=notes,
             data_quality_flags=flags,
+            source_status=fv.source_status,
+            errors=fv.errors,
+            degraded=degraded,
+            degraded_sources=degraded_sources,
         )
 
     # ------------------------------------------------------------------ helpers
@@ -194,8 +229,7 @@ class ScoringEngine:
     ) -> tuple[FeatureVector, DataQualityFlags]:
         """Apply neutral defaults and record data-quality issues."""
         if fv.a_vix is None and fv.realized_vol_annual is None and fv.atr_5d_pct is None:
-            flags.a_vix = "missing or stale"
-            # Conservative neutral regime
+            flags.a_vix = flags.a_vix if flags.a_vix != "ok" else "missing or stale"
             fv = fv.model_copy(update={"vol_regime": 1})
 
         if fv.vol_regime is None:
@@ -254,17 +288,12 @@ class ScoringEngine:
         return prediction_for
 
     def _volatility_delta(self, fv: FeatureVector) -> tuple[np.ndarray, float]:
-        """Extra vol push beyond the baseline regime.
-
-        If implied (A-VIX) is meaningfully above realised vol, raise the
-        probability of a large move (uncooked risk).  If realised > implied,
-        we are already in a trending market -- also raise the large bucket.
-        """
+        """Extra vol push beyond the baseline regime."""
         vix = _clamp(fv.a_vix, 0.0, 200.0, 0.0)
         realised = _clamp(fv.realized_vol_annual, 0.0, 200.0, 0.0)
 
         if vix > 0 and realised > 0:
-            gap = (vix - realised) / 30.0  # normalise to ~ +/-1
+            gap = (vix - realised) / 30.0
         elif vix > 0:
             gap = (vix - 16.0) / 30.0
         elif realised > 0:
@@ -273,18 +302,13 @@ class ScoringEngine:
             gap = 0.0
 
         gap = _clamp(gap, -1.0, 1.0, 0.0)
-        # Positive gap -> high bucket, negative -> low bucket
         high = gap * 0.30
         low = -gap * 0.20
         delta = np.array([low, -low - high, high], dtype=float)
         return delta, high
 
     def _catalyst_delta(self, fv: FeatureVector) -> tuple[np.ndarray, float]:
-        """Scheduled high-impact events increase tail probability.
-
-        Score 0-5 linearly scales a high-bucket uplift; low bucket falls by the
-        same amount (mid keeps the remainder).
-        """
+        """Scheduled high-impact events increase tail probability."""
         score = _clamp(fv.catalyst_score, 0.0, 5.0, 0.0)
         high = (score / 5.0) * 0.45
         low = -high * 0.70
@@ -292,18 +316,10 @@ class ScoringEngine:
         return delta, high
 
     def _alignment_delta(self, fv: FeatureVector) -> tuple[np.ndarray, float]:
-        """Strong directional alignment among US futures, commodities and FX.
-
-        We care about the *magnitude* of aligned moves more than the sign,
-        because the prediction target is the *absolute* ASX return.
-        A large pro-ASX suite raises the high bucket; a large risk-off suite
-        still raises volatility and therefore the high bucket.
-        """
+        """Strong directional alignment among US futures, commodities and FX."""
         magnitude = _clamp(fv.cross_asset_magnitude, 0.0, 5.0, 0.0)
         alignment = _clamp(fv.cross_asset_alignment_score, -1.0, 1.0, 0.0)
 
-        # Magnitude is the dominant driver; alignment nudges the sign of the
-        # low/high split (pro-ASX -> high, risk-off -> low).
         mag_push = min(magnitude / 4.0, 0.40)
         sign_push = alignment * 0.15
         high = mag_push + sign_push
@@ -325,11 +341,7 @@ class ScoringEngine:
         return delta, high
 
     def _spi_delta(self, fv: FeatureVector) -> tuple[np.ndarray, float]:
-        """SPI futures basis and momentum confirm / deny the cash move.
-
-        Positive basis + positive momentum = futures leading the cash market
-        higher -> raises the high bucket.  The opposite lowers it.
-        """
+        """SPI futures basis and momentum confirm / deny the cash move."""
         basis = _clamp(fv.spi_basis_pct, -2.0, 2.0, 0.0)
         momentum = _clamp(fv.spi_momentum_pct, -3.0, 3.0, 0.0)
         combined = (basis + momentum) / 2.0
@@ -339,23 +351,15 @@ class ScoringEngine:
         return delta, high
 
     def _direction_score(self, fv: FeatureVector) -> float:
-        """Estimate the signed probability of a down day (< 0%).
-
-        Negative score -> higher probability of a negative next-day return.
-        Positive score -> lower probability of a negative return.
-        Zero -> roughly 50/50 prior.
-        """
+        """Estimate the signed probability of a down day (< 0%)."""
         score = 0.0
 
-        # Cross-asset alignment is the strongest directional signal.
         alignment = _clamp(fv.cross_asset_alignment_score, -1.0, 1.0, 0.0)
         score -= 0.50 * alignment
 
-        # Current ASX session direction tends to persist into the close/overnight.
         session_return = _clamp(fv.asx_open_to_now_return_pct, -2.0, 2.0, 0.0)
         score -= 0.25 * (session_return / 0.5)
 
-        # SPI futures leading the cash market lower is a bearish confirmation.
         spi_combined = 0.0
         if fv.spi_basis_pct is not None:
             spi_combined += _clamp(fv.spi_basis_pct, -2.0, 2.0, 0.0)
@@ -363,27 +367,225 @@ class ScoringEngine:
             spi_combined += _clamp(fv.spi_momentum_pct, -3.0, 3.0, 0.0)
         score -= 0.15 * _clamp(spi_combined / 2.0, -1.0, 1.0, 0.0)
 
-        # VIX rising and US yields rising are classic risk-off signals for ASX.
         vix_change = _clamp(fv.vix_change_pct, -10.0, 10.0, 0.0)
         score -= 0.05 * _clamp(vix_change / 5.0, -1.0, 1.0, 0.0)
 
         us10y_change = _clamp(fv.us_10y_change_bps, -20.0, 20.0, 0.0)
         score -= 0.05 * _clamp(us10y_change / 20.0, -1.0, 1.0, 0.0)
 
-        # Catalyst events increase uncertainty but do not strongly bias sign.
         return _clamp(score, -3.0, 3.0, 0.0)
 
-    def _compute_confidence(self, probs: np.ndarray, flags: DataQualityFlags) -> float:
-        """Confidence = how far the distribution is from uniform, penalised by missing data."""
+    def _compute_confidence(self, probs: np.ndarray, fv: FeatureVector) -> float:
+        """Confidence = distance from uniform, penalised by missing/stale data."""
         max_prob = float(np.max(probs))
-        # Distance from uniform (1/4), normalised to [0, 1]
         base_conf = (max_prob - 1.0 / 4.0) / (3.0 / 4.0)
         base_conf = max(0.0, min(1.0, base_conf))
 
-        # Count non-ok flags
-        flag_count = sum(1 for v in flags.model_dump().values() if v != "ok")
-        penalty = min(flag_count * 0.08, 0.35)
-        return base_conf - penalty
+        def _status(s: Any) -> str | None:
+            if isinstance(s, DataSourceStatus):
+                return s.status
+            if isinstance(s, dict):
+                return s.get("status")
+            return getattr(s, "status", None)
+
+        flag_count = sum(
+            1 for s in (fv.source_status or []) if _status(s) not in ("ok", None)
+        )
+        penalty = min(flag_count * 0.05, 0.25)
+        return max(0.2, min(1.0, base_conf - penalty))
+
+    def _degraded_status(
+        self, fv: FeatureVector, flags: DataQualityFlags
+    ) -> tuple[bool, list[str]]:
+        """Return whether the prediction is degraded and the list of problem sources."""
+        degraded_sources: list[str] = []
+        for s in fv.source_status or []:
+            if isinstance(s, DataSourceStatus):
+                status = s.status
+                name = s.name
+            elif isinstance(s, dict):
+                status = s.get("status")
+                name = s.get("name", "unknown")
+            else:
+                status = getattr(s, "status", None)
+                name = getattr(s, "name", "unknown")
+            if status in ("failed", "stale"):
+                degraded_sources.append(name or "unknown")
+        # Also include flags that are not ok
+        for k, v in flags.model_dump().items():
+            if v != "ok" and k not in degraded_sources:
+                degraded_sources.append(k)
+        return bool(degraded_sources), degraded_sources
+
+    def _build_factor_contributions(
+        self,
+        fv: FeatureVector,
+        vol_high: float,
+        cat_high: float,
+        align_high: float,
+        sess_high: float,
+        spi_high: float,
+    ) -> list[FactorContribution]:
+        """Build the human-readable factor contribution list."""
+        # 1. US Equity Lead
+        us_changes = [
+            ("S&P", fv.sp500_change_pct),
+            ("Nasdaq", fv.nasdaq_change_pct),
+            ("Dow", fv.dow_change_pct),
+            ("US futures", fv.us_futures_change_pct),
+        ]
+        us_values = [v for _, v in us_changes if v is not None]
+        us_avg = sum(us_values) / len(us_values) if us_values else None
+        us_note = ", ".join(f"{n}={_fmt_pct(v)}" for n, v in us_changes if v is not None)
+        us_note = us_note or "No US equity data"
+        us_score = _clamp(us_avg, -2.0, 2.0, 0.0) if us_avg is not None else 0.0
+
+        # 2. SPI futures bias
+        spi_basis = _clamp(fv.spi_basis_pct, -2.0, 2.0, 0.0)
+        spi_momentum = _clamp(fv.spi_momentum_pct, -3.0, 3.0, 0.0)
+        spi_combined = (
+            (spi_basis + spi_momentum) / 2.0
+            if (fv.spi_basis_pct is not None or fv.spi_momentum_pct is not None)
+            else None
+        )
+        spi_note = f"basis {_fmt_pct(fv.spi_basis_pct)}, momentum {_fmt_pct(fv.spi_momentum_pct)}"
+        spi_score = _clamp(spi_combined, -1.0, 1.0, 0.0) if spi_combined is not None else 0.0
+
+        # 3. Iron ore
+        iron = _clamp(fv.iron_ore_change_pct, -10.0, 10.0, 0.0)
+
+        # 4. Gold & Silver
+        if fv.gold_change_pct is not None or fv.silver_change_pct is not None:
+            values = [v for v in [fv.gold_change_pct, fv.silver_change_pct] if v is not None]
+            pm_avg = sum(values) / len(values) if values else 0.0
+            pm_note = (
+                f"gold {_fmt_pct(fv.gold_change_pct)}, silver {_fmt_pct(fv.silver_change_pct)}"
+            )
+            pm_dir = _direction_label(pm_avg)
+        else:
+            pm_avg = None
+            pm_note = "No precious metals data"
+            pm_dir = "neutral"
+
+        # 5. AUD/USD
+        aud = _clamp(fv.aud_usd_change_pct, -5.0, 5.0, 0.0)
+
+        # 6. Volatility
+        realized = f"{fv.realized_vol_annual:.1f}%" if fv.realized_vol_annual is not None else "n/a"
+        vol_note = f"A-VIX {fv.a_vix or 'n/a'}, realised {realized}; regime {fv.vol_regime}"
+        # High volatility is treated as a tail/negative tail risk for equities.
+        vol_dir = "bearish" if (fv.vol_regime or 0) >= 2 else "bullish"
+
+        # 7. Catalyst
+        cat = _clamp(fv.catalyst_score, 0.0, 5.0, 0.0)
+
+        # 8. ASX session
+        session_ret = _clamp(fv.asx_open_to_now_return_pct, -5.0, 5.0, 0.0)
+        session_date = (fv.sources or {}).get("asx_session_date", "latest session")
+        session_fallback = (fv.sources or {}).get("asx_session_fallback")
+        session_return_fmt = _fmt_pct(fv.asx_open_to_now_return_pct)
+        session_note = (
+            f"{fv.asx_session_character} session, return {session_return_fmt} ({session_date})"
+        )
+        if session_fallback:
+            session_note += f" [{session_fallback}]"
+
+        # 9. Overall alignment
+        alignment = _clamp(fv.cross_asset_alignment_score, -1.0, 1.0, 0.0)
+        magnitude = _clamp(fv.cross_asset_magnitude, 0.0, 5.0, 0.0)
+
+        return [
+            FactorContribution(
+                name="US Equity Lead (S&P / Nasdaq / Dow overnight move)",
+                raw_value=us_avg,
+                raw_unit="%",
+                direction=_direction_label(us_avg if us_avg is not None else 0.0),
+                weight=round(self.weights["alignment"], 4),
+                score=round(us_score * self.weights["alignment"], 4),
+                note=us_note,
+            ),
+            FactorContribution(
+                name="SPI 200 Futures bias",
+                raw_value=spi_combined,
+                raw_unit="%",
+                direction=_direction_label(spi_score),
+                weight=round(self.weights["spi_basis"], 4),
+                score=round(spi_score * self.weights["spi_basis"], 4),
+                note=spi_note,
+            ),
+            FactorContribution(
+                name="Iron Ore change",
+                raw_value=fv.iron_ore_change_pct,
+                raw_unit="%",
+                direction=_direction_label(iron),
+                weight=round(self.weights["alignment"] / 3.0, 4),
+                score=round(iron / 2.0 * self.weights["alignment"], 4),
+                note=(
+                    f"Iron ore {_fmt_pct(fv.iron_ore_change_pct)};"
+                    " positive supports materials, negative weighs"
+                ),
+            ),
+            FactorContribution(
+                name="Gold & Silver change",
+                raw_value=pm_avg,
+                raw_unit="%",
+                direction=pm_dir,
+                weight=round(self.weights["alignment"] / 3.0, 4),
+                score=round((pm_avg or 0.0) / 2.0 * self.weights["alignment"], 4),
+                note=pm_note,
+            ),
+            FactorContribution(
+                name="AUD/USD move",
+                raw_value=fv.aud_usd_change_pct,
+                raw_unit="%",
+                direction=_direction_label(aud),
+                weight=round(self.weights["alignment"] / 3.0, 4),
+                score=round(aud / 2.0 * self.weights["alignment"], 4),
+                note=(
+                    f"AUD/USD {_fmt_pct(fv.aud_usd_change_pct)};"
+                    " rising AUD is pro-growth / pro-ASX"
+                ),
+            ),
+            FactorContribution(
+                name="A-VIX / Volatility Regime",
+                raw_value=fv.a_vix,
+                raw_unit="index",
+                direction=vol_dir,
+                weight=round(self.weights["volatility"], 4),
+                score=round(vol_high * self.weights["volatility"], 4),
+                note=vol_note,
+            ),
+            FactorContribution(
+                name="Catalyst Score (economic calendar)",
+                raw_value=cat,
+                raw_unit="0-5",
+                direction="bearish" if cat >= 3 else "neutral",
+                weight=round(self.weights["catalyst"], 4),
+                score=round(cat / 5.0 * self.weights["catalyst"], 4),
+                note=(
+                    f"{int(fv.high_impact_events_next_24h or 0)} high-impact event(s) in next 24h,"
+                    f" {int(fv.high_impact_events_next_48h or 0)} in 48h"
+                ),
+            ),
+            FactorContribution(
+                name="Current-day / last-session ASX character",
+                raw_value=session_ret,
+                raw_unit="%",
+                direction=_direction_label(session_ret),
+                weight=round(self.weights["session"], 4),
+                score=round(sess_high * self.weights["session"], 4),
+                note=session_note,
+            ),
+            FactorContribution(
+                name="Overall Alignment Score",
+                raw_value=fv.cross_asset_alignment_score,
+                raw_unit="score",
+                direction=_direction_label(alignment),
+                weight=round(self.weights["alignment"], 4),
+                score=round(align_high * self.weights["alignment"], 4),
+                note=f"Alignment {alignment:+.2f}, cross-asset magnitude {magnitude:.2f}%",
+            ),
+        ]
 
 
 def bucket_from_return(return_pct: float) -> str:
