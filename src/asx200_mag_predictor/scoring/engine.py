@@ -1,12 +1,15 @@
-"""Rule-based scoring engine for ASX200 next-day magnitude probabilities.
+"""Rule-based scoring engine for ASX200 next-day magnitude and direction probabilities.
 
 Design notes
 ------------
 * The engine is intentionally transparent.  Every factor maps to a logit
-  adjustment for the [low, mid, high] buckets, and a final softmax turns the
-  combined logit vector into a probability distribution.
-* Volatility sets the *baseline* distribution.  The other four factors tilt
-  the baseline toward or away from a large move.
+  adjustment for the [low, mid, high] magnitude buckets, and a final softmax
+  turns the combined logit vector into a conditional positive-move distribution.
+* A separate direction model estimates the probability the next-day return is
+  negative (< 0%).  The two pieces are combined to produce the final four
+  buckets: negative, low (0-0.3%), mid (0.3-0.5%), high (>0.5%).
+* Volatility sets the *magnitude baseline* distribution.  The other four
+  factors tilt the baseline toward or away from a large move.
 * Weights from `Settings` scale each factor's contribution; they are normalised
   internally so the engine is stable regardless of absolute weight size.
 * All missing values are filled with neutral defaults and flagged.
@@ -32,11 +35,12 @@ from asx200_mag_predictor.timezone import now_sydney
 
 logger = get_logger(__name__)
 
-BUCKET_LABELS = ["<0.3%", "0.3%-0.5%", ">0.5%"]
-BUCKET_KEYS = ["low", "mid", "high"]
+BUCKET_LABELS = ["<0%", "0%-0.3%", "0.3%-0.5%", ">0.5%"]
+BUCKET_KEYS = ["negative", "low", "mid", "high"]
 
-# Baseline bucket distributions indexed by volatility regime (0=calm ... 4=extreme).
-# Each vector is [low, mid, high] and sums to 1.
+# Baseline magnitude distributions indexed by volatility regime (0=calm ... 4=extreme).
+# Each vector is [low, mid, high] for *positive* moves and sums to 1.
+# The negative bucket is derived from a separate direction model.
 VOL_BASELINES: dict[int, list[float]] = {
     0: [0.60, 0.28, 0.12],  # calm
     1: [0.45, 0.30, 0.25],  # normal
@@ -52,6 +56,15 @@ def _softmax(logits: np.ndarray, temperature: float = 0.8) -> np.ndarray:
     x = x - np.max(x)
     e = np.exp(x)
     return e / e.sum()
+
+
+def _sigmoid(x: float) -> float:
+    """Numerically stable sigmoid."""
+    if x >= 0:
+        z = math.exp(-x)
+        return 1.0 / (1.0 + z)
+    z = math.exp(x)
+    return z / (1.0 + z)
 
 
 def _clamp(value: float | None, low: float, high: float, default: float) -> float:
@@ -91,18 +104,16 @@ class ScoringEngine:
 
         prediction_for_date = self._resolve_prediction_for(prediction_for)
 
-        # Start with baseline log-probabilities set by volatility regime.
+        # 1. Magnitude model: P(|return| bucket | return >= 0).
         baseline_probs = VOL_BASELINES.get(fv.vol_regime or 1, VOL_BASELINES[1])
         baseline_logits = np.log(np.maximum(baseline_probs, 1e-9))
 
-        # Build per-factor logit deltas.
         vol_delta, vol_high = self._volatility_delta(fv)
         cat_delta, cat_high = self._catalyst_delta(fv)
         align_delta, align_high = self._alignment_delta(fv)
         sess_delta, sess_high = self._session_delta(fv)
         spi_delta, spi_high = self._spi_delta(fv)
 
-        # Weighted combination.
         combined = baseline_logits.copy()
         combined += self.weights["volatility"] * vol_delta
         combined += self.weights["catalyst"] * cat_delta
@@ -110,10 +121,21 @@ class ScoringEngine:
         combined += self.weights["session"] * sess_delta
         combined += self.weights["spi_basis"] * spi_delta
 
-        probs = _softmax(combined, temperature=self.temperature)
+        abs_probs = _softmax(combined, temperature=self.temperature)
+        abs_probs = (abs_probs + 1e-4) / (abs_probs + 1e-4).sum()
 
-        # Small Laplace-style smoothing to avoid over-confident zeros.
-        probs = (probs + 1e-4) / (probs + 1e-4).sum()
+        # 2. Direction model: P(return < 0).
+        direction_score = self._direction_score(fv)
+        p_negative = _sigmoid(direction_score * 2.0)
+
+        # 3. Combine into four signed buckets: negative, low, mid, high.
+        probs = np.array([
+            p_negative,
+            (1.0 - p_negative) * float(abs_probs[0]),
+            (1.0 - p_negative) * float(abs_probs[1]),
+            (1.0 - p_negative) * float(abs_probs[2]),
+        ])
+        probs = probs / probs.sum()
 
         bucket_index = int(np.argmax(probs))
         bucket_label = BUCKET_LABELS[bucket_index]
@@ -125,6 +147,7 @@ class ScoringEngine:
             alignment=round(float(align_high) * self.weights["alignment"], 4),
             session=round(float(sess_high) * self.weights["session"], 4),
             spi_basis=round(float(spi_high) * self.weights["spi_basis"], 4),
+            direction=round(float(direction_score), 4),
         )
 
         notes: list[str] = []
@@ -134,14 +157,23 @@ class ScoringEngine:
             notes.append(f"High catalyst score ({fv.catalyst_score}) from scheduled events.")
         if fv.cross_asset_magnitude and fv.cross_asset_magnitude > 1.0:
             notes.append(f"Cross-asset magnitude {fv.cross_asset_magnitude:.2f}% is meaningful.")
+        if p_negative > 0.55:
+            notes.append(
+                f"Bearish direction score {direction_score:.2f} raises probability of a down day."
+            )
+        elif p_negative < 0.45:
+            notes.append(
+                f"Bullish direction score {direction_score:.2f} lowers probability of a down day."
+            )
 
         return Prediction(
             prediction_for_date=prediction_for_date,
             features=fv,
             probabilities=BucketProbabilities(
-                low=round(float(probs[0]), 4),
-                mid=round(float(probs[1]), 4),
-                high=round(float(probs[2]), 4),
+                negative=round(float(probs[0]), 4),
+                low=round(float(probs[1]), 4),
+                mid=round(float(probs[2]), 4),
+                high=round(float(probs[3]), 4),
             ),
             bucket=bucket_label,
             confidence=round(confidence, 4),
@@ -306,11 +338,46 @@ class ScoringEngine:
         delta = np.array([low, -low - high, high], dtype=float)
         return delta, high
 
+    def _direction_score(self, fv: FeatureVector) -> float:
+        """Estimate the signed probability of a down day (< 0%).
+
+        Negative score -> higher probability of a negative next-day return.
+        Positive score -> lower probability of a negative return.
+        Zero -> roughly 50/50 prior.
+        """
+        score = 0.0
+
+        # Cross-asset alignment is the strongest directional signal.
+        alignment = _clamp(fv.cross_asset_alignment_score, -1.0, 1.0, 0.0)
+        score -= 0.50 * alignment
+
+        # Current ASX session direction tends to persist into the close/overnight.
+        session_return = _clamp(fv.asx_open_to_now_return_pct, -2.0, 2.0, 0.0)
+        score -= 0.25 * (session_return / 0.5)
+
+        # SPI futures leading the cash market lower is a bearish confirmation.
+        spi_combined = 0.0
+        if fv.spi_basis_pct is not None:
+            spi_combined += _clamp(fv.spi_basis_pct, -2.0, 2.0, 0.0)
+        if fv.spi_momentum_pct is not None:
+            spi_combined += _clamp(fv.spi_momentum_pct, -3.0, 3.0, 0.0)
+        score -= 0.15 * _clamp(spi_combined / 2.0, -1.0, 1.0, 0.0)
+
+        # VIX rising and US yields rising are classic risk-off signals for ASX.
+        vix_change = _clamp(fv.vix_change_pct, -10.0, 10.0, 0.0)
+        score -= 0.05 * _clamp(vix_change / 5.0, -1.0, 1.0, 0.0)
+
+        us10y_change = _clamp(fv.us_10y_change_bps, -20.0, 20.0, 0.0)
+        score -= 0.05 * _clamp(us10y_change / 20.0, -1.0, 1.0, 0.0)
+
+        # Catalyst events increase uncertainty but do not strongly bias sign.
+        return _clamp(score, -3.0, 3.0, 0.0)
+
     def _compute_confidence(self, probs: np.ndarray, flags: DataQualityFlags) -> float:
         """Confidence = how far the distribution is from uniform, penalised by missing data."""
         max_prob = float(np.max(probs))
-        # Distance from uniform (1/3), normalised to [0, 1]
-        base_conf = (max_prob - 1.0 / 3.0) / (2.0 / 3.0)
+        # Distance from uniform (1/4), normalised to [0, 1]
+        base_conf = (max_prob - 1.0 / 4.0) / (3.0 / 4.0)
         base_conf = max(0.0, min(1.0, base_conf))
 
         # Count non-ok flags
@@ -319,10 +386,12 @@ class ScoringEngine:
         return base_conf - penalty
 
 
-def bucket_from_return(abs_return_pct: float) -> str:
-    """Map an actual absolute return to its bucket label."""
-    if abs_return_pct < 0.3:
+def bucket_from_return(return_pct: float) -> str:
+    """Map an actual signed return to its bucket label."""
+    if return_pct < 0.0:
         return BUCKET_LABELS[0]
-    if abs_return_pct <= 0.5:
+    if return_pct < 0.3:
         return BUCKET_LABELS[1]
-    return BUCKET_LABELS[2]
+    if return_pct <= 0.5:
+        return BUCKET_LABELS[2]
+    return BUCKET_LABELS[3]

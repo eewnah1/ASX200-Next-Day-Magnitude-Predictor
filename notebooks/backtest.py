@@ -217,15 +217,15 @@ def run_backtest(months: int = 12, dry_run: bool = False) -> None:
 
         if not dry_run:
             pred_id = repo.save_prediction(pred)
-            actual_abs = abs(_pct_change_at(axjo, current_date + timedelta(days=1), 1) or 0.0)
-            repo.save_actual(pred_id, actual_abs)
+            actual_return = _pct_change_at(axjo, current_date + timedelta(days=1), 1) or 0.0
+            repo.save_actual(pred_id, actual_return)
             results.append(
                 {
                     "date": current_date.date().isoformat(),
                     "predicted": pred.bucket,
-                    "actual_bucket": bucket_from_return(actual_abs),
+                    "actual_bucket": bucket_from_return(actual_return),
                     "probs": pred.probabilities.model_dump(),
-                    "actual_abs": round(actual_abs, 4),
+                    "actual_return": round(actual_return, 4),
                 }
             )
         else:

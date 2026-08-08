@@ -81,15 +81,15 @@ async def get_prediction(prediction_id: str) -> dict[str, Any]:
 
 
 @router.post("/actuals/{prediction_id}")
-async def record_actual(prediction_id: str, actual_abs_return_pct: float) -> dict[str, Any]:
+async def record_actual(prediction_id: str, actual_return_pct: float) -> dict[str, Any]:
     repo = _repo()
     pred = repo.get_prediction(prediction_id)
     if not pred:
         raise HTTPException(status_code=404, detail="Prediction not found")
-    bucket = repo.save_actual(prediction_id, actual_abs_return_pct)
+    bucket = repo.save_actual(prediction_id, actual_return_pct)
     return {
         "prediction_id": prediction_id,
-        "actual_abs_return_pct": actual_abs_return_pct,
+        "actual_return_pct": actual_return_pct,
         "actual_bucket": bucket,
     }
 

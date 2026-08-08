@@ -63,11 +63,12 @@ class FeatureVector(BaseModel):
 
 
 class BucketProbabilities(BaseModel):
-    """Probabilities for each magnitude bucket."""
+    """Probabilities for each next-day return bucket."""
 
-    low: float = Field(..., ge=0.0, le=1.0, description="P(|return| < 0.3%)")
-    mid: float = Field(..., ge=0.0, le=1.0, description="P(0.3% <= |return| <= 0.5%)")
-    high: float = Field(..., ge=0.0, le=1.0, description="P(|return| > 0.5%)")
+    negative: float = Field(..., ge=0.0, le=1.0, description="P(return < 0%)")
+    low: float = Field(..., ge=0.0, le=1.0, description="P(0% <= return < 0.3%)")
+    mid: float = Field(..., ge=0.0, le=1.0, description="P(0.3% <= return <= 0.5%)")
+    high: float = Field(..., ge=0.0, le=1.0, description="P(return > 0.5%)")
 
 
 class FactorBreakdown(BaseModel):
@@ -78,6 +79,7 @@ class FactorBreakdown(BaseModel):
     alignment: float
     session: float
     spi_basis: float
+    direction: float
 
 
 class Prediction(BaseModel):
@@ -101,7 +103,7 @@ class Actual(BaseModel):
     """Outcome used for calibration."""
 
     prediction_id: str
-    actual_abs_return_pct: float
+    actual_return_pct: float
     actual_bucket: str
     recorded_at: datetime = Field(default_factory=now_sydney)
 

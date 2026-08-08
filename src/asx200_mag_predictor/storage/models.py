@@ -43,7 +43,7 @@ class ActualRecord(Base):
     prediction_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("predictions.id"), unique=True, nullable=False
     )
-    actual_abs_return_pct: Mapped[float] = mapped_column(Float, nullable=False)
+    actual_return_pct: Mapped[float] = mapped_column(Float, nullable=False)
     actual_bucket: Mapped[str] = mapped_column(String(20), nullable=False)
     recorded_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, nullable=False)
 

@@ -48,8 +48,8 @@ def cmd_calibration(args: argparse.Namespace) -> None:
 def cmd_record_actual(args: argparse.Namespace) -> None:
     init_db(get_settings())
     repo = Repository()
-    repo.save_actual(args.prediction_id, args.abs_return)
-    print(f"Recorded actual {args.abs_return}% for prediction {args.prediction_id}")
+    repo.save_actual(args.prediction_id, args.actual_return)
+    print(f"Recorded actual {args.actual_return}% for prediction {args.prediction_id}")
 
 
 def main() -> None:
@@ -72,7 +72,7 @@ def main() -> None:
 
     p_actual = sub.add_parser("record-actual", help="Record actual outcome for a prediction")
     p_actual.add_argument("prediction_id")
-    p_actual.add_argument("--abs-return", type=float, required=True)
+    p_actual.add_argument("--actual-return", type=float, required=True, dest="actual_return")
     p_actual.set_defaults(func=cmd_record_actual)
 
     p_scheduler = sub.add_parser("run-scheduler", help="Start the daily prediction scheduler")

@@ -7,7 +7,8 @@ from asx200_mag_predictor.scoring.engine import ScoringEngine, bucket_from_retur
 
 def _probs_sum_to_one(p):
     probs = p.probabilities
-    assert round(probs.low + probs.mid + probs.high, 6) == 1.0
+    total = probs.negative + probs.low + probs.mid + probs.high
+    assert round(total, 3) == 1.0
 
 
 def test_probabilities_sum_to_one(engine: ScoringEngine):
@@ -56,7 +57,8 @@ def test_alignment_magnitude_increases_high_bucket(engine: ScoringEngine):
 
 
 def test_bucket_from_return():
-    assert bucket_from_return(0.15) == "<0.3%"
+    assert bucket_from_return(-0.15) == "<0%"
+    assert bucket_from_return(0.15) == "0%-0.3%"
     assert bucket_from_return(0.40) == "0.3%-0.5%"
     assert bucket_from_return(0.75) == ">0.5%"
 

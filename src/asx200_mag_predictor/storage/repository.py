@@ -71,11 +71,11 @@ class Repository:
         )
         return self._to_prediction(record) if record else None
 
-    def save_actual(self, prediction_id: str, actual_abs_return_pct: float) -> str:
-        bucket = bucket_from_return(abs(actual_abs_return_pct))
+    def save_actual(self, prediction_id: str, actual_return_pct: float) -> str:
+        bucket = bucket_from_return(actual_return_pct)
         record = ActualRecord(
             prediction_id=prediction_id,
-            actual_abs_return_pct=actual_abs_return_pct,
+            actual_return_pct=actual_return_pct,
             actual_bucket=bucket,
         )
         self.session.add(record)
@@ -92,7 +92,7 @@ class Repository:
         return [
             {
                 "prediction_id": r.prediction_id,
-                "actual_abs_return_pct": r.actual_abs_return_pct,
+                "actual_return_pct": r.actual_return_pct,
                 "actual_bucket": r.actual_bucket,
                 "recorded_at": r.recorded_at,
             }

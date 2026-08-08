@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
-from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -358,7 +356,11 @@ class MarketAuxCalendar:
             response.raise_for_status()
             data = response.json()
             articles = data.get("data", [])
-            return {"source": "marketaux", "high_impact_24h": min(len(articles) // 5, 5), "high_impact_48h": 0}
+            return {
+                "source": "marketaux",
+                "high_impact_24h": min(len(articles) // 5, 5),
+                "high_impact_48h": 0,
+            }
         except Exception as exc:  # noqa: BLE001
             logger.debug("MarketAux calendar failed: %s", exc)
             return {}

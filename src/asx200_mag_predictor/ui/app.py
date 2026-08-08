@@ -84,7 +84,7 @@ with st.sidebar:
 
 
 # ---------------- Main dashboard ----------------
-st.header("Next trading day absolute move probability")
+st.header("Next trading day move probability")
 
 latest = _api_get("/predictions/latest")
 if not latest:
@@ -95,10 +95,11 @@ else:
     confidence = latest["confidence"]
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Low (<0.3%)", f"{probs['low']:.1%}")
-    c2.metric("Mid (0.3-0.5%)", f"{probs['mid']:.1%}")
-    c3.metric("High (>0.5%)", f"{probs['high']:.1%}")
-    c4.metric("Confidence", f"{confidence:.0%}")
+    c1.metric("Negative (<0%)", f"{probs['negative']:.1%}")
+    c2.metric("Low (0-0.3%)", f"{probs['low']:.1%}")
+    c3.metric("Mid (0.3-0.5%)", f"{probs['mid']:.1%}")
+    c4.metric("High (>0.5%)", f"{probs['high']:.1%}")
+    st.metric("Confidence", f"{confidence:.0%}")
 
     gen = _fmt_aest(latest["generated_at"])
     st.markdown(f"**Primary bucket:** `{bucket}`  |  Generated: {gen}")
@@ -144,7 +145,12 @@ if history:
     hist_df = pd.json_normalize(history)
     if not hist_df.empty:
         hist_df["generated_at_aest"] = hist_df["generated_at"].apply(_fmt_aest)
-        prob_cols = ["probabilities.low", "probabilities.mid", "probabilities.high"]
+        prob_cols = [
+            "probabilities.negative",
+            "probabilities.low",
+            "probabilities.mid",
+            "probabilities.high",
+        ]
         cols = ["generated_at_aest", "bucket", "confidence", *prob_cols]
         display_df = hist_df[cols] if all(c in hist_df.columns for c in prob_cols) else hist_df
         st.dataframe(display_df, use_container_width=True, hide_index=True)
