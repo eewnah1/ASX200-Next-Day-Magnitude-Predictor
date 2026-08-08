@@ -15,8 +15,8 @@ venv/
 *.db
 *.sqlite
 *.sqlite3
-data/
-raw_snapshots/
+/data/
+/raw_snapshots/
 
 # IDE
 .vscode/

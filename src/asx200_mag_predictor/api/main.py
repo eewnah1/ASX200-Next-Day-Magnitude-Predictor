@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from asx200_mag_predictor.api.routes import router
 from asx200_mag_predictor.config import get_settings
 from asx200_mag_predictor.logging_config import setup_logging
+from asx200_mag_predictor.scheduler.jobs import start_scheduler
 from asx200_mag_predictor.storage.models import init_db
 
 settings = get_settings()
@@ -16,9 +17,11 @@ setup_logging(settings)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialise DB on startup; scheduler can be started here too."""
+    """Initialise DB and start the daily scheduler on startup."""
     init_db(settings)
+    scheduler = start_scheduler(settings)
     yield
+    scheduler.shutdown()
 
 
 app = FastAPI(
