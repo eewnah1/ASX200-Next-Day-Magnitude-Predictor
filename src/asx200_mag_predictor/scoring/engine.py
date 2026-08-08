@@ -46,23 +46,21 @@ BUCKET_KEYS = ["negative", "low", "mid", "high"]
 PRIMARY_BUCKETS = ["Large Down", "Neutral", "Large Up"]
 SECONDARY_BUCKETS = ["Mild Bearish Bias", "True Neutral", "Mild Bullish Bias"]
 
-# Exact Model 1 weights (sum to 1.10). Each weight is multiplied by a signed
-# score typically in the [-2.5, +2.5] range.
+# Exact Model 1 weights (sum to 1.00). Each weight is multiplied by a signed
+# score in the [-3.0, +3.0] range so the maximum possible primary score is ±3.0.
 PRIMARY_WEIGHTS: dict[str, float] = {
-    "financials_vs_materials": 0.13,
-    "iron_ore": 0.09,
-    "rsi": 0.10,
-    "ath_distance": 0.09,
-    "housing_credit": 0.09,
+    "rsi": 0.12,
+    "ath_distance": 0.11,
+    "financials_vs_materials": 0.12,
+    "iron_ore": 0.10,
+    "momentum_exhaustion": 0.10,
+    "housing_credit": 0.08,
     "heavyweight_idio": 0.08,
-    "us_equity_lead": 0.10,
-    "momentum_exhaustion": 0.08,
+    "us_equity_lead": 0.08,
     "china_steel_property": 0.07,
-    "gold_silver": 0.06,
+    "gold_silver": 0.05,
     "spi": 0.05,
-    "a_vix": 0.06,
-    "alignment": 0.05,
-    "catalyst": 0.05,
+    "a_vix": 0.04,
 }
 
 # Baseline magnitude distributions indexed by volatility regime (0=calm ... 4=extreme).
@@ -315,7 +313,7 @@ class ScoringEngine:
                 )
             )
 
-        # 1. Financials vs Materials Relative Strength (13%)
+        # 1. Financials vs Materials Relative Strength (12%)
         fvm_raw = fv.financials_minus_materials_weighted_pct
         fvm_score = _clamp((fv.financials_vs_materials_score or 0.0) * 2.0, -3.0, 3.0)
         fvm_note = (
@@ -334,7 +332,7 @@ class ScoringEngine:
             fvm_note,
         )
 
-        # 2. Iron Ore change (9%)
+        # 2. Iron Ore change (10%)
         iron = fv.iron_ore_change_pct
         iron_score = _clamp((iron or 0.0) / 1.2, -3.0, 3.0)
         add(
@@ -346,7 +344,7 @@ class ScoringEngine:
             f"Iron ore {_fmt_pct(iron)}; positive supports materials, negative weighs",
         )
 
-        # 3. RSI (14) Overbought/Oversold (10%)
+        # 3. RSI (14) Overbought/Oversold (12%)
         rsi = fv.rsi_14
         rsi_score_val = _clamp((fv.rsi_score or 0.0) * 2.0, -3.0, 3.0)
         add(
@@ -358,7 +356,7 @@ class ScoringEngine:
             f"RSI {rsi:.1f}" if rsi is not None else "No RSI data",
         )
 
-        # 4. Distance from All-Time High (9%)
+        # 4. Distance from All-Time High (11%)
         ath = fv.ath_distance_pct
         ath_score_val = _clamp(fv.ath_score or 0.0, -1.5, 0.5)
         add(
@@ -375,7 +373,7 @@ class ScoringEngine:
             ),
         )
 
-        # 5. Housing & Credit Pulse (9%)
+        # 5. Housing & Credit Pulse (8%)
         hc = fv.housing_credit_pulse_score
         hc_score_val = _clamp(
             (score_housing_credit_pulse(hc) or 0.0) * 2.0, -3.0, 3.0
@@ -419,7 +417,7 @@ class ScoringEngine:
             hw_note,
         )
 
-        # 7. US Equity Lead (10%)
+        # 7. US Equity Lead (8%)
         us_changes = [
             ("S&P", fv.sp500_change_pct),
             ("Nasdaq", fv.nasdaq_change_pct),
@@ -439,7 +437,7 @@ class ScoringEngine:
             us_note or "No US equity data",
         )
 
-        # 8. Short-term Momentum Exhaustion (8%)
+        # 8. Short-term Momentum Exhaustion (10%)
         mom = fv.index_5d_return_pct
         mom_score_val = _clamp(
             (fv.momentum_exhaustion_score or 0.0) * 3.0
@@ -483,7 +481,7 @@ class ScoringEngine:
             ),
         )
 
-        # 10. Gold & Silver change (6%)
+        # 10. Gold & Silver change (5%)
         if fv.gold_change_pct is not None or fv.silver_change_pct is not None:
             values = [v for v in [fv.gold_change_pct, fv.silver_change_pct] if v is not None]
             pm_avg = sum(values) / len(values) if values else 0.0
@@ -522,7 +520,7 @@ class ScoringEngine:
             f"basis {_fmt_pct(fv.spi_basis_pct)}, momentum {_fmt_pct(fv.spi_momentum_pct)}",
         )
 
-        # 12. A-VIX / Volatility Regime (6%)
+        # 12. A-VIX / Volatility Regime (4%)
         a_vix = fv.a_vix
         vol_regime = fv.vol_regime or 1
         vix_score = _clamp(
@@ -539,38 +537,21 @@ class ScoringEngine:
             f"A-VIX {a_vix or 'n/a'}; regime {vol_regime}",
         )
 
-        # 13. Overall Alignment Score (5%)
-        alignment = _clamp(fv.cross_asset_alignment_score, -1.0, 1.0, 0.0)
-        alignment_score = _clamp(alignment * 3.0, -3.0, 3.0)
-        magnitude = _clamp(fv.cross_asset_magnitude, 0.0, 5.0, 0.0)
-        add(
-            "Overall Alignment Score",
-            alignment,
-            "score",
-            alignment_score,
-            PRIMARY_WEIGHTS["alignment"],
-            f"alignment {alignment:+.2f}, cross-asset magnitude {magnitude:.2f}%",
-        )
-
-        # 14. Catalyst Score (5%)
-        cat = _clamp(fv.catalyst_score, 0.0, 5.0, 0.0)
-        cat_score = _clamp(-cat / 1.67, -3.0, 3.0)
-        add(
-            "Catalyst Score",
-            cat,
-            "0-5",
-            cat_score,
-            PRIMARY_WEIGHTS["catalyst"],
-            f"{int(fv.high_impact_events_next_24h or 0)} high-impact event(s) in next 24h, "
-            f"{int(fv.high_impact_events_next_48h or 0)} in 48h",
-        )
-
         # Strict high-conviction gating.
         rsi_for_gate = _clamp(fv.rsi_14, 0.0, 100.0, 50.0)
         ath_for_gate = _clamp(fv.ath_distance_pct, -50.0, 50.0, -5.0)
-        if total >= 2.2 and rsi_for_gate <= 68 and ath_for_gate <= -0.7:
+        iron_for_gate = fv.iron_ore_change_pct
+        if (
+            total >= 2.3
+            and rsi_for_gate <= 65
+            and ath_for_gate <= -1.0
+        ):
             primary_bucket = "Large Up"
-        elif total <= -2.2 and (rsi_for_gate >= 67 or ath_for_gate >= -1.2):
+        elif (
+            total <= -2.3
+            and rsi_for_gate >= 68
+            and (ath_for_gate >= -1.0 or (iron_for_gate is not None and iron_for_gate <= -0.6))
+        ):
             primary_bucket = "Large Down"
         else:
             primary_bucket = "Neutral"
@@ -618,21 +599,47 @@ class ScoringEngine:
                 )
             )
 
-        # 1. Very short-term SPI 200 futures momentum (15%)
-        spi_short = fv.spi_short_term_momentum_pct
-        if spi_short is None:
-            spi_short = fv.spi_momentum_pct
-        spi_score = _clamp((spi_short or 0.0) / 0.5, -3.0, 3.0)
+        # 1. RSI(14) (14%)
+        rsi = fv.rsi_14
+        rsi_score = _clamp((fv.rsi_score or 0.0) * 2.0, -3.0, 3.0)
+        slope = _clamp(fv.rsi_slope, -10.0, 10.0, 0.0)
+        slope_score = _clamp(slope * 0.2, -1.0, 1.0)
+        rsi_total = _clamp(rsi_score + slope_score, -3.0, 3.0)
         add(
-            "Very short-term SPI 200 futures momentum",
-            spi_short,
-            "%",
-            spi_score,
-            0.15,
-            "2-4 hour SPI futures bias (daily fallback when intraday unavailable)",
+            "RSI(14)",
+            rsi,
+            "index",
+            rsi_total,
+            0.14,
+            (
+                f"RSI {rsi:.1f}, slope {slope:+.2f}pt"
+                if rsi is not None
+                else "No RSI data"
+            ),
         )
 
-        # 2. Financials vs Materials relative strength (1-day and 2-day) (15%)
+        # 2. Short-term Momentum Exhaustion (11%)
+        mom = fv.index_5d_return_pct
+        mom_score = _clamp(
+            ((fv.momentum_exhaustion_score or 0.0) + (fv.profit_taking_combo_score or 0.0))
+            * 1.5,
+            -3.0,
+            3.0,
+        )
+        add(
+            "Short-term Momentum Exhaustion",
+            mom,
+            "%",
+            mom_score,
+            0.11,
+            (
+                f"5d return {_fmt_pct(mom)}; profit-taking combo"
+                if mom is not None
+                else "No 5d return data"
+            ),
+        )
+
+        # 3. Financials vs Materials (1d & 2d) (13%)
         fvm_1d = fv.financials_minus_materials_1d_pct
         fvm_2d = fv.financials_minus_materials_2d_pct
         fvm_1d_score = _clamp(
@@ -648,122 +655,180 @@ class ScoringEngine:
             else "No Financials/Materials short-term data"
         )
         add(
-            "Financials vs Materials relative strength (1d & 2d)",
+            "Financials vs Materials (1d & 2d)",
             fvm_1d,
             "%",
             fvm_score,
-            0.15,
+            0.13,
             fvm_note,
         )
 
-        # 3. RSI(14) position and slope (15%)
-        rsi = fv.rsi_14
-        rsi_position = _clamp((fv.rsi_score or 0.0) * 1.5, -3.0, 3.0)
-        slope = _clamp(fv.rsi_slope, -10.0, 10.0, 0.0)
-        slope_score = _clamp(slope * 0.15, -1.0, 1.0)
-        rsi_score = _clamp(rsi_position + slope_score, -3.0, 3.0)
+        # 4. Distance from All-Time High (10%)
+        ath = fv.ath_distance_pct
+        ath_score_val = _clamp((fv.ath_score or 0.0) * 2.0, -3.0, 3.0)
         add(
-            "RSI(14) position and slope",
-            rsi,
-            "index",
-            rsi_score,
-            0.15,
-            (
-                f"RSI {rsi:.1f}, slope {slope:+.2f}pt"
-                if rsi is not None
-                else "No RSI data"
-            ),
-        )
-
-        # 4. Distance from VWAP / opening range (10%)
-        vwap = fv.vwap_distance_pct
-        if vwap is None:
-            vwap = fv.asx_open_to_now_return_pct
-        vwap_score = _clamp((vwap or 0.0) / 0.3, -3.0, 3.0)
-        add(
-            "Distance from VWAP / opening range",
-            vwap,
+            "Distance from All-Time High",
+            ath,
             "%",
-            vwap_score,
+            ath_score_val,
             0.10,
-            "Distance from session open / VWAP proxy",
-        )
-
-        # 5. Early session volume and advance-decline behaviour (15%)
-        session_ret = _clamp(fv.asx_open_to_now_return_pct, -2.0, 2.0, 0.0)
-        vol_ratio = fv.current_volume_vs_20d_avg or 1.0
-        if session_ret > 0.15 and vol_ratio > 1.1:
-            vol_score = 1.5
-        elif session_ret < -0.15 and vol_ratio > 1.1:
-            vol_score = -1.5
-        elif session_ret > 0.15:
-            vol_score = 0.8
-        elif session_ret < -0.15:
-            vol_score = -0.8
-        else:
-            vol_score = 0.0
-        vol_score = _clamp(
-            vol_score + (fv.market_breadth_score or 0.0), -3.0, 3.0
-        )
-        add(
-            "Early session volume and advance-decline behaviour",
-            fv.asx_open_to_now_return_pct,
-            "%",
-            vol_score,
-            0.15,
             (
-                f"session return {_fmt_pct(fv.asx_open_to_now_return_pct)}, "
-                f"volume ratio {vol_ratio:.2f}x"
-                if fv.asx_open_to_now_return_pct is not None
-                else "No session data"
+                f"ATH distance {_fmt_pct(ath)}"
+                if ath is not None
+                else "No price history"
             ),
         )
 
-        # 6. Overnight gap direction + whether it is being filled (15%)
-        gap = fv.overnight_gap_pct
-        session_ret = fv.asx_open_to_now_return_pct or 0.0
-        if gap is None:
-            gap_score = 0.0
-        else:
-            if (gap > 0 and session_ret < 0) or (gap < 0 and session_ret > 0):
-                # Gap is being filled; score opposite to the gap direction.
-                gap_score = -_clamp(abs(gap) / 0.4, 0.0, 3.0) * (1 if gap > 0 else -1)
-            else:
-                # Gap extending / not filled; score with the gap direction.
-                gap_score = _clamp(abs(gap) / 0.4, 0.0, 3.0) * (1 if gap > 0 else -1)
-            gap_score = _clamp(gap_score + (fv.gap_filled_score or 0.0), -3.0, 3.0)
-        add(
-            "Overnight gap direction + fill",
-            gap,
-            "%",
-            gap_score,
-            0.15,
-            "Overnight gap vs current session direction",
-        )
-
-        # 7. Micro sensitivity to Housing/Credit and Iron Ore (15%)
-        hc = fv.housing_credit_pulse_score
+        # 5. Iron Ore (9%)
         iron = fv.iron_ore_change_pct
-        hc_micro = _clamp((score_housing_credit_pulse(hc) or 0.0) * 1.5, -3.0, 3.0)
-        iron_micro = _clamp((iron or 0.0) / 1.5, -3.0, 3.0)
-        micro_score = _clamp((hc_micro + iron_micro) / 2.0, -3.0, 3.0)
+        iron_score = _clamp((iron or 0.0) / 1.2, -3.0, 3.0)
         add(
-            "Micro Housing/Credit and Iron Ore",
+            "Iron Ore",
             iron,
             "%",
-            micro_score,
-            0.15,
+            iron_score,
+            0.09,
+            f"Iron ore {_fmt_pct(iron)}",
+        )
+
+        # 6. Heavyweight (CBA + BHP) (8%)
+        hw = fv.heavyweight_idio_return_pct
+        hw_score_val = _clamp(
+            (score_heavyweight_idio(hw, fv.heavyweight_idio_news_boost) or 0.0) * 2.0,
+            -3.0,
+            3.0,
+        )
+        hw_note = (
+            f"CBA+BHP weighted {hw:+.2f}%"
+            + (
+                f", news boost +{fv.heavyweight_idio_news_boost:.0%}"
+                if fv.heavyweight_idio_news_boost
+                else ", no major idiosyncratic news boost"
+            )
+            if hw is not None
+            else "No CBA/BHP data"
+        )
+        add(
+            "Heavyweight (CBA + BHP)",
+            hw,
+            "%",
+            hw_score_val,
+            0.08,
+            hw_note,
+        )
+
+        # 7. Housing & Credit (7%)
+        hc = fv.housing_credit_pulse_score
+        hc_score_val = _clamp(
+            (score_housing_credit_pulse(hc) or 0.0) * 2.0, -3.0, 3.0
+        )
+        add(
+            "Housing & Credit",
+            hc,
+            "0-10",
+            hc_score_val,
+            0.07,
             (
-                f"housing pulse {hc:.1f}/10, iron ore {_fmt_pct(iron)}"
+                f"pulse {hc:.1f}/10"
                 if hc is not None
-                else f"iron ore {_fmt_pct(iron)}"
+                else "No housing/credit proxy data"
             ),
         )
 
-        # Resolve secondary bucket.
-        if total >= 0.7 and bullish >= 4 and bearish <= 2:
+        # 8. US Equity Lead (7%)
+        us_changes = [
+            ("S&P", fv.sp500_change_pct),
+            ("Nasdaq", fv.nasdaq_change_pct),
+            ("Dow", fv.dow_change_pct),
+            ("US futures", fv.us_futures_change_pct),
+        ]
+        us_values = [v for _, v in us_changes if v is not None]
+        us_avg = sum(us_values) / len(us_values) if us_values else 0.0
+        us_note = ", ".join(f"{n}={_fmt_pct(v)}" for n, v in us_changes if v is not None)
+        us_score = _clamp(us_avg / 1.0, -3.0, 3.0)
+        add(
+            "US Equity Lead",
+            us_avg,
+            "%",
+            us_score,
+            0.07,
+            us_note or "No US equity data",
+        )
+
+        # 9. SPI short-term (6%)
+        spi_short = fv.spi_short_term_momentum_pct
+        if spi_short is None:
+            spi_short = fv.spi_momentum_pct
+        spi_score = _clamp((spi_short or 0.0) / 0.5, -3.0, 3.0)
+        add(
+            "SPI short-term",
+            spi_short,
+            "%",
+            spi_score,
+            0.06,
+            "2-4 hour SPI futures bias (daily fallback when intraday unavailable)",
+        )
+
+        # 10. China Pulse (6%)
+        china = fv.china_steel_property_return_pct
+        china_score_val = _clamp(
+            (score_china_steel_property(china) or 0.0) * 2.5, -3.0, 3.0
+        )
+        add(
+            "China Pulse",
+            china,
+            "%",
+            china_score_val,
+            0.06,
+            (
+                f"composite {china:+.2f}%"
+                if china is not None
+                else "No China steel/proxy data"
+            ),
+        )
+
+        # 11. Gold & Silver (5%)
+        if fv.gold_change_pct is not None or fv.silver_change_pct is not None:
+            values = [v for v in [fv.gold_change_pct, fv.silver_change_pct] if v is not None]
+            pm_avg = sum(values) / len(values) if values else 0.0
+            pm_note = (
+                f"gold {_fmt_pct(fv.gold_change_pct)}, "
+                f"silver {_fmt_pct(fv.silver_change_pct)}"
+            )
+        else:
+            pm_avg = 0.0
+            pm_note = "No precious metals data"
+        pm_score = _clamp(pm_avg / 1.0, -3.0, 3.0)
+        add(
+            "Gold & Silver",
+            pm_avg,
+            "%",
+            pm_score,
+            0.05,
+            pm_note,
+        )
+
+        # 12. A-VIX (4%)
+        a_vix = fv.a_vix
+        vol_regime = fv.vol_regime or 1
+        vix_score = _clamp(
+            -((a_vix or 16.0) - 16.0) / 6.0 - (vol_regime - 1) * 0.4,
+            -3.0,
+            3.0,
+        )
+        add(
+            "A-VIX",
+            a_vix,
+            "index",
+            vix_score,
+            0.04,
+            f"A-VIX {a_vix or 'n/a'}; regime {vol_regime}",
+        )
+
+        # Resolve secondary bucket. Require strong alignment across several factors.
+        if total >= 0.7 and bullish >= 5 and bearish <= 2:
             secondary_bucket = "Mild Bullish Bias"
-        elif total <= -0.7 and bearish >= 4 and bullish <= 2:
+        elif total <= -0.7 and bearish >= 5 and bullish <= 2:
             secondary_bucket = "Mild Bearish Bias"
         else:
             secondary_bucket = "True Neutral"
