@@ -31,6 +31,10 @@ class DataQualityFlags(BaseModel):
     us_assets: str = "ok"
     calendar: str = "ok"
     volume: str = "ok"
+    financials_vs_materials: str = "ok"
+    housing_credit: str = "ok"
+    china_steel_property: str = "ok"
+    heavyweight_idio: str = "ok"
 
 
 class FeatureVector(BaseModel):
@@ -72,6 +76,24 @@ class FeatureVector(BaseModel):
     # SPI basis / futures momentum
     spi_basis_pct: float | None = None
     spi_momentum_pct: float | None = None
+
+    # New high-priority factors
+    financials_minus_materials_1d_pct: float | None = None
+    financials_minus_materials_3d_pct: float | None = None
+    financials_minus_materials_5d_pct: float | None = None
+    financials_minus_materials_weighted_pct: float | None = None
+    financials_vs_materials_score: float | None = None
+
+    housing_credit_pulse_score: float | None = None  # 0-10
+    housing_credit_pulse_sources: list[str] = Field(default_factory=list)
+
+    china_steel_property_score: float | None = None
+    china_steel_property_return_pct: float | None = None
+    china_steel_property_sources: list[str] = Field(default_factory=list)
+
+    heavyweight_idio_return_pct: float | None = None
+    heavyweight_idio_score: float | None = None
+    heavyweight_idio_news_boost: float = 0.0
 
     # Metadata
     fetched_at: datetime = Field(default_factory=now_sydney)

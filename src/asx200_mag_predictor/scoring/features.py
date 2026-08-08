@@ -159,6 +159,72 @@ def classify_session(
     return "mixed"
 
 
+def score_financials_vs_materials(weighted_diff_pct: float | None) -> float | None:
+    """Map Financials vs Materials weighted diff to a score."""
+    if weighted_diff_pct is None:
+        return None
+    if weighted_diff_pct > 0.8:
+        return 1.5
+    if weighted_diff_pct > 0.3:
+        return 0.7
+    if weighted_diff_pct > -0.3:
+        return 0.0
+    if weighted_diff_pct > -0.8:
+        return -0.7
+    return -1.5
+
+
+def score_housing_credit_pulse(pulse_score: float | None) -> float | None:
+    """Map 0-10 housing/credit pulse score to an ASX directional score."""
+    if pulse_score is None:
+        return None
+    if pulse_score >= 8:
+        return 1.5
+    if pulse_score >= 5:
+        return 0.6
+    if pulse_score >= 3:
+        return 0.0
+    return -1.2
+
+
+def score_china_steel_property(composite_return_pct: float | None) -> float | None:
+    """Map China steel/property proxy composite return to a score."""
+    if composite_return_pct is None:
+        return None
+    if composite_return_pct > 0.8:
+        return 1.2
+    if composite_return_pct > 0.3:
+        return 0.6
+    if composite_return_pct > -0.3:
+        return 0.0
+    if composite_return_pct > -0.8:
+        return -0.6
+    if composite_return_pct > -1.2:
+        return -1.2
+    return -1.8
+
+
+def score_heavyweight_idio(
+    weighted_return_pct: float | None, news_boost: float = 0.0
+) -> float | None:
+    """Map CBA+BHP weighted return to an idiosyncratic score, with optional news boost."""
+    if weighted_return_pct is None:
+        return None
+    if weighted_return_pct > 1.2:
+        score = 1.3
+    elif weighted_return_pct > 0.5:
+        score = 0.6
+    elif weighted_return_pct > -0.5:
+        score = 0.0
+    elif weighted_return_pct > -1.2:
+        score = -0.6
+    else:
+        score = -1.3
+    if news_boost and score != 0.0:
+        score = score * (1.0 + news_boost)
+    return score
+
+
 @dataclass
 class RawMarketData:
     """Container produced by data fetchers."""
@@ -169,6 +235,10 @@ class RawMarketData:
     commodities: dict[str, Any] | None = None
     fx: dict[str, Any] | None = None
     us_assets: dict[str, Any] | None = None
+    financials_vs_materials: dict[str, Any] | None = None
+    housing_credit: dict[str, Any] | None = None
+    china_pulse: dict[str, Any] | None = None
+    heavyweight_idio: dict[str, Any] | None = None
     calendar: dict[str, Any] | None = None
     volume: dict[str, Any] | None = None
     source_status: list[dict[str, Any]] = field(default_factory=list)
@@ -357,6 +427,40 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
         flags.volume = _source_flag(statuses.get("volume"))
         feats["asx_session_character"] = "unknown"
 
+    # New high-priority factors
+    fvm = raw.financials_vs_materials or {}
+    feats["financials_minus_materials_1d_pct"] = fvm.get("diff_1d_pct")
+    feats["financials_minus_materials_3d_pct"] = fvm.get("diff_3d_pct")
+    feats["financials_minus_materials_5d_pct"] = fvm.get("diff_5d_pct")
+    feats["financials_minus_materials_weighted_pct"] = fvm.get("weighted_diff_pct")
+    feats["financials_vs_materials_score"] = score_financials_vs_materials(
+        fvm.get("weighted_diff_pct")
+    )
+    if not fvm:
+        flags.financials_vs_materials = _source_flag(statuses.get("financials_vs_materials"))
+
+    hc = raw.housing_credit or {}
+    feats["housing_credit_pulse_score"] = hc.get("pulse_score")
+    feats["housing_credit_pulse_sources"] = hc.get("sources", [])
+    if not hc:
+        flags.housing_credit = _source_flag(statuses.get("housing_credit"))
+
+    cp = raw.china_pulse or {}
+    feats["china_steel_property_score"] = score_china_steel_property(cp.get("composite_return_pct"))
+    feats["china_steel_property_return_pct"] = cp.get("composite_return_pct")
+    feats["china_steel_property_sources"] = list((cp.get("per_ticker_1d") or {}).keys())
+    if not cp:
+        flags.china_steel_property = _source_flag(statuses.get("china_pulse"))
+
+    hw = raw.heavyweight_idio or {}
+    feats["heavyweight_idio_return_pct"] = hw.get("weighted_change_pct")
+    feats["heavyweight_idio_news_boost"] = hw.get("news_boost", 0.0)
+    feats["heavyweight_idio_score"] = score_heavyweight_idio(
+        hw.get("weighted_change_pct"), hw.get("news_boost", 0.0)
+    )
+    if not hw:
+        flags.heavyweight_idio = _source_flag(statuses.get("heavyweight_idio"))
+
     # SPI basis
     if raw.spi_futures and raw.asx_cash:
         spi_series = _hist("spi_futures", "close") or []
@@ -381,6 +485,10 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
         "us_assets": "us_assets",
         "calendar": "calendar",
         "volume": "volume",
+        "financials_vs_materials": "financials_vs_materials",
+        "housing_credit": "housing_credit",
+        "china_pulse": "china_steel_property",
+        "heavyweight_idio": "heavyweight_idio",
     }
     for source, flag_key in flag_map.items():
         st = _source_flag(statuses.get(source))

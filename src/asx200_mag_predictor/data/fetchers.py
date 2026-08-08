@@ -38,6 +38,12 @@ DOW_TICKERS = ["^DJI", "YM=F"]
 US10Y_TICKERS = ["^TNX", "^FVX"]
 VIX_TICKERS = ["^VIX"]
 
+FINANCIALS_BANKS_TICKERS = ["CBA.AX", "NAB.AX", "WBC.AX", "ANZ.AX"]
+MATERIALS_MINERS_TICKERS = ["BHP.AX", "RIO.AX", "FMG.AX"]
+HOUSING_PROXIES_TICKERS = ["REA.AX", "GMG.AX", "SCG.AX", "LLC.AX"]
+CHINA_STEEL_PROPERTY_TICKERS = ["BHP.AX", "RIO.AX", "FMG.AX", "TIO=F", "HG=F"]
+HEAVYWEIGHT_TICKERS = ["CBA.AX", "BHP.AX"]
+
 
 @dataclass
 class FetchResult:
@@ -145,6 +151,64 @@ def _latest_change_pct(df: pd.DataFrame) -> float | None:
     except Exception as exc:  # noqa: BLE001
         logger.debug("latest_change_pct failed: %s", exc)
         return None
+
+
+def _pct_change_n(df: pd.DataFrame, n: int) -> float | None:
+    """Return percent change between last close and close `n` bars back."""
+    if df.empty or "Close" not in df.columns:
+        return None
+    try:
+        close = df["Close"].dropna()
+        if len(close) < n + 1:
+            return None
+        return (close.iloc[-1] - close.iloc[-(n + 1)]) / close.iloc[-(n + 1)] * 100.0
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("pct_change_n failed: %s", exc)
+        return None
+
+
+def _basket_avg_change(
+    tickers: list[str], days: int, period: str = "20d"
+) -> tuple[float | None, dict[str, float | None], pd.DataFrame | None]:
+    """Compute average `days`-bar percent change for a basket of tickers.
+
+    Returns (average_change, per_ticker_changes, last_valid_df).
+    """
+    changes: dict[str, float | None] = {}
+    latest_ts: datetime | None = None
+    for ticker in tickers:
+        df = _yf_download([ticker], period=period, interval="1d")
+        if not df.empty:
+            if days == 1:
+                chg = _latest_change_pct(df)
+            else:
+                chg = _pct_change_n(df, days)
+            changes[ticker] = chg
+            ts = _data_timestamp(df)
+            if ts and (latest_ts is None or ts > latest_ts):
+                latest_ts = ts
+        else:
+            changes[ticker] = None
+    valid = [v for v in changes.values() if v is not None]
+    if not valid:
+        return None, changes, None
+    avg = sum(valid) / len(valid)
+    # Build a minimal DataFrame just to carry a timestamp for _data_timestamp callers.
+    ts_df = pd.DataFrame(index=pd.DatetimeIndex([latest_ts])) if latest_ts else None
+    return avg, changes, ts_df
+
+
+def _diff_or_none(a: float | None, b: float | None) -> float | None:
+    if a is None or b is None:
+        return None
+    return a - b
+
+
+def _heavyweight_news_boost() -> float:
+    """Return a 0-0.5 idiosyncratic boost if major CBA/BHP news is detected."""
+    # No API keys by default; return 0.0 and rely on price action.
+    # Extend here with NewsAPI / MarketAux sentiment if keys are configured.
+    return 0.0
 
 
 def _last_price_and_date(df: pd.DataFrame) -> tuple[float | None, datetime | None]:
@@ -401,6 +465,190 @@ class YFinanceClient:
             last_success_at=latest_ts.isoformat() if latest_ts else _aest_iso(),
             value=", ".join(values) if values else None,
             error="; ".join(errors) if errors else None,
+        )
+
+    def financials_vs_materials(self) -> FetchResult:
+        """Financials vs Materials relative strength (1d / 3d / 5d)."""
+        fin_changes: dict[str, float | None] = {}
+        mat_changes: dict[str, float | None] = {}
+        latest_ts: datetime | None = None
+        status = "ok"
+
+        for days in [1, 3, 5]:
+            fin_avg, fin_per_ticker, fin_df = _basket_avg_change(FINANCIALS_BANKS_TICKERS, days)
+            mat_avg, mat_per_ticker, mat_df = _basket_avg_change(MATERIALS_MINERS_TICKERS, days)
+            fin_changes[f"fin_{days}d"] = fin_avg
+            mat_changes[f"mat_{days}d"] = mat_avg
+            for df in [fin_df, mat_df]:
+                if df is not None:
+                    ts = _data_timestamp(df)
+                    if ts and (latest_ts is None or ts > latest_ts):
+                        latest_ts = ts
+            if fin_avg is None or mat_avg is None:
+                status = "stale"
+
+        diff_1d = _diff_or_none(fin_changes.get("fin_1d"), mat_changes.get("mat_1d"))
+        diff_3d = _diff_or_none(fin_changes.get("fin_3d"), mat_changes.get("mat_3d"))
+        diff_5d = _diff_or_none(fin_changes.get("fin_5d"), mat_changes.get("mat_5d"))
+        weighted = None
+        if diff_1d is not None and diff_3d is not None and diff_5d is not None:
+            weighted = 0.5 * diff_1d + 0.3 * diff_3d + 0.2 * diff_5d
+        else:
+            status = "stale"
+
+        if all(v is None for v in [diff_1d, diff_3d, diff_5d]):
+            return FetchResult(
+                name="financials_vs_materials",
+                status="failed",
+                error="Could not fetch Financials or Materials basket data",
+                last_success_at=latest_ts.isoformat() if latest_ts else _aest_iso(),
+            )
+
+        return FetchResult(
+            name="financials_vs_materials",
+            data={
+                "financials_1d": fin_changes.get("fin_1d"),
+                "financials_3d": fin_changes.get("fin_3d"),
+                "financials_5d": fin_changes.get("fin_5d"),
+                "materials_1d": mat_changes.get("mat_1d"),
+                "materials_3d": mat_changes.get("mat_3d"),
+                "materials_5d": mat_changes.get("mat_5d"),
+                "diff_1d_pct": diff_1d,
+                "diff_3d_pct": diff_3d,
+                "diff_5d_pct": diff_5d,
+                "weighted_diff_pct": weighted,
+            },
+            status=status,
+            last_success_at=latest_ts.isoformat() if latest_ts else _aest_iso(),
+            value=(
+                f"fin={_fmt_pct(fin_changes.get('fin_1d'))}, "
+                f"mat={_fmt_pct(mat_changes.get('mat_1d'))}, "
+                f"diff={_fmt_pct(weighted)}"
+            ),
+        )
+
+    def housing_credit_pulse(self) -> FetchResult:
+        """Housing & credit pulse proxy from ASX real-estate / property names."""
+        avg_1d, per_ticker_1d, df_1d = _basket_avg_change(HOUSING_PROXIES_TICKERS, 1)
+        avg_5d, per_ticker_5d, df_5d = _basket_avg_change(HOUSING_PROXIES_TICKERS, 5)
+        latest_ts = _data_timestamp(df_1d) if df_1d is not None else None
+        if df_5d is not None:
+            ts5 = _data_timestamp(df_5d)
+            if ts5 and (latest_ts is None or ts5 > latest_ts):
+                latest_ts = ts5
+
+        if avg_1d is None and avg_5d is None:
+            return FetchResult(
+                name="housing_credit",
+                status="failed",
+                error="Could not fetch housing/credit proxy basket",
+                last_success_at=latest_ts.isoformat() if latest_ts else _aest_iso(),
+            )
+
+        # Base score 5; move with 1d and 5d proxy returns. Coefficients keep output 0-10.
+        a1 = avg_1d or 0.0
+        a5 = avg_5d or 0.0
+        pulse = 5.0 + (a1 * 1.5) + (a5 * 0.5)
+        pulse = max(0.0, min(10.0, pulse))
+
+        return FetchResult(
+            name="housing_credit",
+            data={
+                "pulse_score": pulse,
+                "proxy_1d_pct": avg_1d,
+                "proxy_5d_pct": avg_5d,
+                "per_ticker_1d": per_ticker_1d,
+                "per_ticker_5d": per_ticker_5d,
+                "sources": HOUSING_PROXIES_TICKERS,
+            },
+            status="stale",  # proxies, not hard housing/credit data
+            last_success_at=latest_ts.isoformat() if latest_ts else _aest_iso(),
+            value=f"pulse={pulse:.1f}/10",
+        )
+
+    def china_steel_property(self) -> FetchResult:
+        """China steel / property pulse from iron ore, copper and major miners."""
+        weights = {
+            "TIO=F": 0.25,  # iron ore futures
+            "HG=F": 0.20,  # copper futures
+            "BHP.AX": 0.20,
+            "RIO.AX": 0.15,
+            "FMG.AX": 0.20,
+        }
+        changes: dict[str, float | None] = {}
+        latest_ts: datetime | None = None
+        weighted_sum = 0.0
+        weight_used = 0.0
+        for ticker, w in weights.items():
+            df = _yf_download([ticker], period="10d", interval="1d")
+            chg = _latest_change_pct(df)
+            changes[ticker] = chg
+            if chg is not None:
+                weighted_sum += w * chg
+                weight_used += w
+                ts = _data_timestamp(df)
+                if ts and (latest_ts is None or ts > latest_ts):
+                    latest_ts = ts
+
+        if weight_used == 0:
+            return FetchResult(
+                name="china_pulse",
+                status="failed",
+                error="Could not fetch China steel/property proxies",
+                last_success_at=latest_ts.isoformat() if latest_ts else _aest_iso(),
+            )
+
+        composite = weighted_sum / weight_used
+        status = "ok" if weight_used >= 0.8 else "stale"
+        return FetchResult(
+            name="china_pulse",
+            data={
+                "composite_return_pct": composite,
+                "per_ticker_1d": changes,
+                "coverage": weight_used,
+            },
+            status=status,
+            last_success_at=latest_ts.isoformat() if latest_ts else _aest_iso(),
+            value=f"composite={composite:+.2f}%",
+        )
+
+    def heavyweight_idiosyncratic(self) -> FetchResult:
+        """CBA + BHP 1-day return, with optional news boost."""
+        changes: dict[str, float | None] = {}
+        latest_ts: datetime | None = None
+        for ticker in HEAVYWEIGHT_TICKERS:
+            df = _yf_download([ticker], period="10d", interval="1d")
+            chg = _latest_change_pct(df)
+            changes[ticker] = chg
+            if chg is not None:
+                ts = _data_timestamp(df)
+                if ts and (latest_ts is None or ts > latest_ts):
+                    latest_ts = ts
+
+        if any(v is None for v in changes.values()):
+            return FetchResult(
+                name="heavyweight_idio",
+                status="stale",
+                data=changes,
+                error="Could not fetch both CBA and BHP",
+                last_success_at=latest_ts.isoformat() if latest_ts else _aest_iso(),
+            )
+
+        cba = changes["CBA.AX"] or 0.0
+        bhp = changes["BHP.AX"] or 0.0
+        weighted = 0.55 * cba + 0.45 * bhp
+        news_boost = _heavyweight_news_boost()
+        return FetchResult(
+            name="heavyweight_idio",
+            data={
+                "cba_change_pct": cba,
+                "bhp_change_pct": bhp,
+                "weighted_change_pct": weighted,
+                "news_boost": news_boost,
+            },
+            status="ok",
+            last_success_at=latest_ts.isoformat() if latest_ts else _aest_iso(),
+            value=f"CBA={cba:+.2f}%, BHP={bhp:+.2f}% (boost {news_boost:.0%})",
         )
 
     def intraday_asx(self) -> FetchResult:
@@ -799,6 +1047,10 @@ class DataFetcher:
         results["commodities"] = self.yf.commodities()
         results["fx"] = self.yf.fx()
         results["us_assets"] = self.yf.us_assets()
+        results["financials_vs_materials"] = self.yf.financials_vs_materials()
+        results["housing_credit"] = self.yf.housing_credit_pulse()
+        results["china_pulse"] = self.yf.china_steel_property()
+        results["heavyweight_idio"] = self.yf.heavyweight_idiosyncratic()
         results["volume"] = self.yf.intraday_asx()
 
         cal = self.ff_calendar.fetch()
@@ -819,6 +1071,10 @@ class DataFetcher:
             commodities=results["commodities"].data,
             fx=results["fx"].data,
             us_assets=results["us_assets"].data,
+            financials_vs_materials=results["financials_vs_materials"].data,
+            housing_credit=results["housing_credit"].data,
+            china_pulse=results["china_pulse"].data,
+            heavyweight_idio=results["heavyweight_idio"].data,
             calendar=results["calendar"].data,
             volume=results["volume"].data,
             source_status=[

@@ -95,11 +95,19 @@ class ScoringEngine:
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or get_settings()
         self.weights = {
-            "volatility": _clamp(self.settings.volatility_weight, 0.0, 1.0, 0.35),
-            "catalyst": _clamp(self.settings.catalyst_weight, 0.0, 1.0, 0.25),
-            "alignment": _clamp(self.settings.alignment_weight, 0.0, 1.0, 0.25),
-            "session": _clamp(self.settings.session_weight, 0.0, 1.0, 0.10),
+            "volatility": _clamp(self.settings.volatility_weight, 0.0, 1.0, 0.20),
+            "catalyst": _clamp(self.settings.catalyst_weight, 0.0, 1.0, 0.14),
+            "alignment": _clamp(self.settings.alignment_weight, 0.0, 1.0, 0.16),
+            "session": _clamp(self.settings.session_weight, 0.0, 1.0, 0.07),
             "spi_basis": _clamp(self.settings.spi_basis_weight, 0.0, 1.0, 0.05),
+            "financials_vs_materials": _clamp(
+                self.settings.financials_vs_materials_weight, 0.0, 1.0, 0.12
+            ),
+            "housing_credit": _clamp(self.settings.housing_credit_weight, 0.0, 1.0, 0.10),
+            "china_steel_property": _clamp(
+                self.settings.china_steel_property_weight, 0.0, 1.0, 0.08
+            ),
+            "heavyweight_idio": _clamp(self.settings.heavyweight_idio_weight, 0.0, 1.0, 0.08),
         }
         # Normalise weights so they behave like relative allocations.
         total = sum(self.weights.values())
@@ -126,6 +134,10 @@ class ScoringEngine:
         align_delta, align_high = self._alignment_delta(fv)
         sess_delta, sess_high = self._session_delta(fv)
         spi_delta, spi_high = self._spi_delta(fv)
+        fvm_delta, fvm_high = self._financials_vs_materials_delta(fv)
+        hc_delta, hc_high = self._housing_credit_delta(fv)
+        china_delta, china_high = self._china_steel_property_delta(fv)
+        hw_delta, hw_high = self._heavyweight_idio_delta(fv)
 
         baseline_probs = VOL_BASELINES.get(fv.vol_regime or 1, VOL_BASELINES[1])
         baseline_logits = np.log(np.maximum(baseline_probs, 1e-9))
@@ -136,6 +148,10 @@ class ScoringEngine:
         combined += self.weights["alignment"] * align_delta
         combined += self.weights["session"] * sess_delta
         combined += self.weights["spi_basis"] * spi_delta
+        combined += self.weights["financials_vs_materials"] * fvm_delta
+        combined += self.weights["housing_credit"] * hc_delta
+        combined += self.weights["china_steel_property"] * china_delta
+        combined += self.weights["heavyweight_idio"] * hw_delta
 
         abs_probs = _softmax(combined, temperature=self.temperature)
         abs_probs = (abs_probs + 1e-4) / (abs_probs + 1e-4).sum()
@@ -172,6 +188,10 @@ class ScoringEngine:
             align_high,
             sess_high,
             spi_high,
+            fvm_high,
+            hc_high,
+            china_high,
+            hw_high,
         )
 
         confidence = self._compute_confidence(probs, fv)
@@ -350,28 +370,73 @@ class ScoringEngine:
         delta = np.array([low, -low - high, high], dtype=float)
         return delta, high
 
+    def _financials_vs_materials_delta(self, fv: FeatureVector) -> tuple[np.ndarray, float]:
+        """Banks vs Miners relative strength tilts the positive-move distribution."""
+        score = _clamp(fv.financials_vs_materials_score, -2.0, 2.0, 0.0)
+        high = _clamp(score / 2.5, -0.35, 0.35, 0.0)
+        low = -high * 0.60
+        delta = np.array([low, -low - high, high], dtype=float)
+        return delta, high
+
+    def _housing_credit_delta(self, fv: FeatureVector) -> tuple[np.ndarray, float]:
+        """Housing/credit pulse: strong pulse lifts tail probability."""
+        score = _clamp(fv.housing_credit_pulse_score, -2.0, 2.0, 0.0)
+        high = _clamp(score / 3.0, -0.30, 0.30, 0.0)
+        low = -high * 0.60
+        delta = np.array([low, -low - high, high], dtype=float)
+        return delta, high
+
+    def _china_steel_property_delta(self, fv: FeatureVector) -> tuple[np.ndarray, float]:
+        """China steel/property proxy affects resources-exposed ASX tail."""
+        score = _clamp(fv.china_steel_property_score, -2.5, 2.5, 0.0)
+        high = _clamp(score / 2.5, -0.40, 0.40, 0.0)
+        low = -high * 0.60
+        delta = np.array([low, -low - high, high], dtype=float)
+        return delta, high
+
+    def _heavyweight_idio_delta(self, fv: FeatureVector) -> tuple[np.ndarray, float]:
+        """CBA + BHP idiosyncratic move can drive the index."""
+        score = _clamp(fv.heavyweight_idio_score, -2.5, 2.5, 0.0)
+        high = _clamp(score / 2.5, -0.40, 0.40, 0.0)
+        low = -high * 0.60
+        delta = np.array([low, -low - high, high], dtype=float)
+        return delta, high
+
     def _direction_score(self, fv: FeatureVector) -> float:
         """Estimate the signed probability of a down day (< 0%)."""
         score = 0.0
 
         alignment = _clamp(fv.cross_asset_alignment_score, -1.0, 1.0, 0.0)
-        score -= 0.50 * alignment
+        score -= 0.40 * alignment
 
         session_return = _clamp(fv.asx_open_to_now_return_pct, -2.0, 2.0, 0.0)
-        score -= 0.25 * (session_return / 0.5)
+        score -= 0.20 * (session_return / 0.5)
 
         spi_combined = 0.0
         if fv.spi_basis_pct is not None:
             spi_combined += _clamp(fv.spi_basis_pct, -2.0, 2.0, 0.0)
         if fv.spi_momentum_pct is not None:
             spi_combined += _clamp(fv.spi_momentum_pct, -3.0, 3.0, 0.0)
-        score -= 0.15 * _clamp(spi_combined / 2.0, -1.0, 1.0, 0.0)
+        score -= 0.12 * _clamp(spi_combined / 2.0, -1.0, 1.0, 0.0)
 
         vix_change = _clamp(fv.vix_change_pct, -10.0, 10.0, 0.0)
-        score -= 0.05 * _clamp(vix_change / 5.0, -1.0, 1.0, 0.0)
+        score -= 0.04 * _clamp(vix_change / 5.0, -1.0, 1.0, 0.0)
 
         us10y_change = _clamp(fv.us_10y_change_bps, -20.0, 20.0, 0.0)
-        score -= 0.05 * _clamp(us10y_change / 20.0, -1.0, 1.0, 0.0)
+        score -= 0.04 * _clamp(us10y_change / 20.0, -1.0, 1.0, 0.0)
+
+        # New high-priority factors
+        fvm = _clamp(fv.financials_vs_materials_score, -2.0, 2.0, 0.0)
+        score -= 0.14 * fvm
+
+        hc = _clamp(fv.housing_credit_pulse_score, -2.0, 2.0, 0.0)
+        score -= 0.12 * hc
+
+        china = _clamp(fv.china_steel_property_score, -2.5, 2.5, 0.0)
+        score -= 0.10 * china
+
+        hw = _clamp(fv.heavyweight_idio_score, -2.5, 2.5, 0.0)
+        score -= 0.10 * hw
 
         return _clamp(score, -3.0, 3.0, 0.0)
 
@@ -425,6 +490,10 @@ class ScoringEngine:
         align_high: float,
         sess_high: float,
         spi_high: float,
+        fvm_high: float,
+        hc_high: float,
+        china_high: float,
+        hw_high: float,
     ) -> list[FactorContribution]:
         """Build the human-readable factor contribution list."""
         # 1. US Equity Lead
@@ -575,6 +644,71 @@ class ScoringEngine:
                 weight=round(self.weights["session"], 4),
                 score=round(sess_high * self.weights["session"], 4),
                 note=session_note,
+            ),
+            FactorContribution(
+                name="Financials vs Materials Relative Strength",
+                raw_value=fv.financials_minus_materials_weighted_pct,
+                raw_unit="%",
+                direction=_direction_label(fv.financials_vs_materials_score or 0.0),
+                weight=round(self.weights["financials_vs_materials"], 4),
+                score=round(fvm_high * self.weights["financials_vs_materials"], 4),
+                note=(
+                    (
+                        f"1d {fv.financials_minus_materials_1d_pct:+.2f}%, "
+                        f"3d {fv.financials_minus_materials_3d_pct:+.2f}%, "
+                        f"5d {fv.financials_minus_materials_5d_pct:+.2f}%"
+                    )
+                    if fv.financials_minus_materials_1d_pct is not None
+                    else "No Financials/Materials data"
+                ),
+            ),
+            FactorContribution(
+                name="Housing & Credit Pulse",
+                raw_value=fv.housing_credit_pulse_score,
+                raw_unit="0-10",
+                direction=_direction_label((fv.housing_credit_pulse_score or 5.0) - 5.0),
+                weight=round(self.weights["housing_credit"], 4),
+                score=round(hc_high * self.weights["housing_credit"], 4),
+                note=(
+                    f"pulse {fv.housing_credit_pulse_score:.1f}/10 via "
+                    f"{', '.join(fv.housing_credit_pulse_sources or ['proxies'])}"
+                    if fv.housing_credit_pulse_score is not None
+                    else "No housing/credit proxy data"
+                ),
+            ),
+            FactorContribution(
+                name="China Steel / Property Pulse",
+                raw_value=fv.china_steel_property_return_pct,
+                raw_unit="%",
+                direction=_direction_label(fv.china_steel_property_score or 0.0),
+                weight=round(self.weights["china_steel_property"], 4),
+                score=round(china_high * self.weights["china_steel_property"], 4),
+                note=(
+                    f"composite {fv.china_steel_property_return_pct:+.2f}% "
+                    f"({', '.join(fv.china_steel_property_sources or ['proxies'])})"
+                    if fv.china_steel_property_return_pct is not None
+                    else "No China steel/proxy data"
+                ),
+            ),
+            FactorContribution(
+                name="Heavyweight Idiosyncratic Score – CBA + BHP",
+                raw_value=fv.heavyweight_idio_return_pct,
+                raw_unit="%",
+                direction=_direction_label(fv.heavyweight_idio_score or 0.0),
+                weight=round(self.weights["heavyweight_idio"], 4),
+                score=round(hw_high * self.weights["heavyweight_idio"], 4),
+                note=(
+                    (
+                        f"CBA/BHP weighted {fv.heavyweight_idio_return_pct:+.2f}%"
+                        + (
+                            f", news boost +{fv.heavyweight_idio_news_boost:.0%}"
+                            if fv.heavyweight_idio_news_boost
+                            else ", no major idiosyncratic news boost"
+                        )
+                    )
+                    if fv.heavyweight_idio_return_pct is not None
+                    else "No CBA/BHP data"
+                ),
             ),
             FactorContribution(
                 name="Overall Alignment Score",

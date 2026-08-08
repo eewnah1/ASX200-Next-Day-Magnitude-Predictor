@@ -29,11 +29,15 @@ class Settings(BaseSettings):
     us_close_update: bool = True
     us_close_run_time: str = "06:30"
 
-    volatility_weight: float = 0.35
-    catalyst_weight: float = 0.25
-    alignment_weight: float = 0.25
-    session_weight: float = 0.10
+    volatility_weight: float = 0.20
+    catalyst_weight: float = 0.14
+    alignment_weight: float = 0.16
+    session_weight: float = 0.07
     spi_basis_weight: float = 0.05
+    financials_vs_materials_weight: float = 0.12
+    housing_credit_weight: float = 0.10
+    china_steel_property_weight: float = 0.08
+    heavyweight_idio_weight: float = 0.08
 
     api_host: str = "0.0.0.0"
     api_port: int = 8000
