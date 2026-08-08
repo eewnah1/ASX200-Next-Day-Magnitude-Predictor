@@ -1,9 +1,11 @@
 """FastAPI application entrypoint."""
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 
 from asx200_mag_predictor.api.routes import router
 from asx200_mag_predictor.config import get_settings
@@ -44,3 +46,10 @@ app.include_router(router, prefix="/api/v1")
 @app.get("/health")
 async def health():
     return {"status": "ok", "env": settings.app_env}
+
+
+@app.get("/", response_class=HTMLResponse)
+async def dashboard():
+    """Serve the public predictor dashboard."""
+    path = Path(__file__).with_name("dashboard.html")
+    return path.read_text(encoding="utf-8")

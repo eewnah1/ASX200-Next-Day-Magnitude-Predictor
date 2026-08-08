@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ASX200 Next-Day Magnitude Predictor</title>
+  <style>
+    :root { --bg:#0f172a; --card:#1e293b; --text:#e2e8f0; --muted:#94a3b8; --low:#22c55e; --mid:#f59e0b; --high:#ef4444; }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; }
+    h1 { margin: 0 0 8px; font-size: 1.5rem; }
+    .subtitle { color: var(--muted); margin-bottom: 24px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .card { background: var(--card); border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); }
+    .card h2 { margin: 0 0 8px; font-size: 0.9rem; color: var(--muted); text-transform: uppercase; }
+    .big { font-size: 2.2rem; font-weight: 700; }
+    .bar { height: 10px; border-radius: 5px; background: #334155; margin-top: 12px; overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 5px; }
+    button { background: #3b82f6; color: white; border: none; padding: 12px 20px; border-radius: 8px; font-size: 1rem; cursor: pointer; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .status { margin-top: 12px; color: var(--muted); font-size: 0.9rem; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { text-align: left; padding: 8px; border-bottom: 1px solid #334155; }
+    th { color: var(--muted); font-weight: 500; }
+    .ok { color: var(--low); }
+    .bad { color: var(--high); }
+    pre { background: #0b1220; padding: 12px; border-radius: 8px; overflow-x: auto; font-size: 0.85rem; }
+    .factor-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155; }
+    .error { color: var(--high); }
+  </style>
+</head>
+<body>
+  <h1>ASX200 Next-Day Magnitude Predictor</h1>
+  <div class="subtitle">Predicts the next ASX 200 trading day's absolute percentage move bucket.</div>
+
+  <div style="margin-bottom:24px;">
+    <button id="runBtn" onclick="runPrediction()">Run prediction now</button>
+    <div class="status" id="status"></div>
+  </div>
+
+  <div class="grid" id="probs"></div>
+
+  <div class="card" style="margin-bottom:24px;">
+    <h2>Primary bucket</h2>
+    <div id="bucket" class="big">-</div>
+    <div id="confidence" style="color:var(--muted)">Confidence: -</div>
+    <div id="generated" style="color:var(--muted);font-size:0.9rem;margin-top:8px;">Generated: -</div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Factor contributions</h2>
+      <div id="factors">No data</div>
+    </div>
+    <div class="card">
+      <h2>Data source health</h2>
+      <table id="healthTable"><tbody></tbody></table>
+    </div>
+    <div class="card">
+      <h2>Calibration</h2>
+      <div id="calibration">No actuals recorded yet.</div>
+    </div>
+    <div class="card">
+      <h2>Calendar proxy</h2>
+      <pre id="calendar">No calendar data.</pre>
+    </div>
+  </div>
+
+  <script>
+    const API = '/api/v1';
+
+    const $ = id => document.getElementById(id);
+
+    async function api(path, method='GET', body=null) {
+      const ctrl = new AbortController();
+      const to = setTimeout(() => ctrl.abort(), 70000);
+      try {
+        const res = await fetch(API + path, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: body ? JSON.stringify(body) : null,
+          signal: ctrl.signal,
+        });
+        clearTimeout(to);
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        return await res.json();
+      } catch (e) {
+        clearTimeout(to);
+        throw e;
+      }
+    }
+
+    function fmtAest(iso) {
+      if (!iso) return '-';
+      try {
+        return new Date(iso).toLocaleString('en-AU', { timeZone: 'Australia/Sydney', dateStyle: 'medium', timeStyle: 'short' });
+      } catch { return iso; }
+    }
+
+    function renderPrediction(data) {
+      const p = data.prediction || data;
+      const probs = p.probabilities;
+      $('probs').innerHTML = `
+        <div class="card"><h2>Low (&lt;0.3%)</h2><div class="big" style="color:var(--low)">${(probs.low*100).toFixed(1)}%</div><div class="bar"><div class="bar-fill" style="width:${probs.low*100}%;background:var(--low)"></div></div></div>
+        <div class="card"><h2>Mid (0.3–0.5%)</h2><div class="big" style="color:var(--mid)">${(probs.mid*100).toFixed(1)}%</div><div class="bar"><div class="bar-fill" style="width:${probs.mid*100}%;background:var(--mid)"></div></div></div>
+        <div class="card"><h2>High (&gt;0.5%)</h2><div class="big" style="color:var(--high)">${(probs.high*100).toFixed(1)}%</div><div class="bar"><div class="bar-fill" style="width:${probs.high*100}%;background:var(--high)"></div></div></div>
+      `;
+      $('bucket').textContent = p.bucket;
+      $('confidence').textContent = `Confidence: ${(p.confidence*100).toFixed(1)}%`;
+      $('generated').textContent = `Generated: ${fmtAest(p.generated_at)}`;
+
+      const fb = p.factor_breakdown || {};
+      $('factors').innerHTML = Object.entries(fb).map(([k,v]) => `<div class="factor-row"><span>${k}</span><span>${v.toFixed(4)}</span></div>`).join('');
+
+      const flags = p.data_quality_flags || {};
+      $('healthTable').querySelector('tbody').innerHTML = Object.entries(flags).map(([k,v]) => `<tr><td>${k}</td><td class="${v==='ok'?'ok':'bad'}">${v}</td></tr>`).join('');
+    }
+
+    async function loadLatest() {
+      try {
+        const data = await api('/predictions/latest');
+        renderPrediction(data);
+      } catch (e) {
+        $('status').textContent = 'No prediction yet. Click "Run prediction now".';
+      }
+    }
+
+    async function loadCalibration() {
+      try {
+        const cal = await api('/calibration');
+        if (cal.total) {
+          $('calibration').innerHTML = `<div class="big">${(cal.hit_rate*100).toFixed(1)}%</div><div>Correct: ${cal.correct}/${cal.total}</div>`;
+        } else {
+          $('calibration').textContent = 'No actuals recorded yet.';
+        }
+      } catch (e) {
+        $('calibration').textContent = 'Could not load calibration.';
+      }
+    }
+
+    async function loadCalendar() {
+      try {
+        const cal = await api('/calendar');
+        $('calendar').textContent = JSON.stringify(cal, null, 2);
+      } catch (e) {
+        $('calendar').textContent = 'Calendar unavailable.';
+      }
+    }
+
+    async function runPrediction() {
+      const btn = $('runBtn');
+      btn.disabled = true;
+      $('status').textContent = 'Fetching market data and scoring (can take ~45s)...';
+      $('status').className = 'status';
+      try {
+        const data = await api('/predict', 'POST');
+        renderPrediction(data);
+        $('status').textContent = `Prediction saved: ${data.prediction_id}`;
+        loadCalibration();
+      } catch (e) {
+        $('status').textContent = 'Error: ' + e.message;
+        $('status').className = 'status error';
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    (async () => {
+      await Promise.all([loadLatest(), loadCalibration(), loadCalendar()]);
+    })();
+  </script>
+</body>
+</html>
