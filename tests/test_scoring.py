@@ -57,10 +57,10 @@ def test_alignment_magnitude_increases_high_bucket(engine: ScoringEngine):
 
 
 def test_bucket_from_return():
-    assert bucket_from_return(-0.15) == "<0%"
-    assert bucket_from_return(0.15) == "0%-0.3%"
-    assert bucket_from_return(0.40) == "0.3%-0.5%"
-    assert bucket_from_return(0.75) == ">0.5%"
+    assert bucket_from_return(-0.75) == "Large Down"
+    assert bucket_from_return(-0.30) == "Neutral"
+    assert bucket_from_return(0.40) == "Neutral"
+    assert bucket_from_return(0.75) == "Large Up"
 
 
 def test_mock_feature_dict(engine: ScoringEngine):

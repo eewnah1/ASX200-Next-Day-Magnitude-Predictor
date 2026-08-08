@@ -123,17 +123,18 @@ def _yf_download(
 
 
 def _extract_series(df: pd.DataFrame) -> dict[str, list[float]] | None:
-    """Extract close/high/low/volume lists from a yfinance DataFrame."""
+    """Extract open/high/low/close/volume lists from a yfinance DataFrame."""
     if df.empty:
         return None
     try:
+        open_ = df["Open"].dropna().tolist() if "Open" in df.columns else []
         close = df["Close"].dropna().tolist()
         high = df["High"].dropna().tolist()
         low = df["Low"].dropna().tolist()
         volume = df["Volume"].dropna().tolist() if "Volume" in df.columns else []
         if not close:
             return None
-        return {"close": close, "high": high, "low": low, "volume": volume}
+        return {"open": open_, "close": close, "high": high, "low": low, "volume": volume}
     except Exception as exc:  # noqa: BLE001
         logger.debug("Extract series failed: %s", exc)
         return None
@@ -475,7 +476,7 @@ class YFinanceClient:
         latest_ts: datetime | None = None
         status = "ok"
 
-        for days in [1, 3, 5]:
+        for days in [1, 2, 3, 5]:
             fin_avg, fin_per_ticker, fin_df = _basket_avg_change(FINANCIALS_BANKS_TICKERS, days)
             mat_avg, mat_per_ticker, mat_df = _basket_avg_change(MATERIALS_MINERS_TICKERS, days)
             fin_changes[f"fin_{days}d"] = fin_avg
@@ -489,6 +490,7 @@ class YFinanceClient:
                 status = "stale"
 
         diff_1d = _diff_or_none(fin_changes.get("fin_1d"), mat_changes.get("mat_1d"))
+        diff_2d = _diff_or_none(fin_changes.get("fin_2d"), mat_changes.get("mat_2d"))
         diff_3d = _diff_or_none(fin_changes.get("fin_3d"), mat_changes.get("mat_3d"))
         diff_5d = _diff_or_none(fin_changes.get("fin_5d"), mat_changes.get("mat_5d"))
         weighted = None
@@ -509,12 +511,15 @@ class YFinanceClient:
             name="financials_vs_materials",
             data={
                 "financials_1d": fin_changes.get("fin_1d"),
+                "financials_2d": fin_changes.get("fin_2d"),
                 "financials_3d": fin_changes.get("fin_3d"),
                 "financials_5d": fin_changes.get("fin_5d"),
                 "materials_1d": mat_changes.get("mat_1d"),
+                "materials_2d": mat_changes.get("mat_2d"),
                 "materials_3d": mat_changes.get("mat_3d"),
                 "materials_5d": mat_changes.get("mat_5d"),
                 "diff_1d_pct": diff_1d,
+                "diff_2d_pct": diff_2d,
                 "diff_3d_pct": diff_3d,
                 "diff_5d_pct": diff_5d,
                 "weighted_diff_pct": weighted,

@@ -7,6 +7,7 @@ missing fields fall back to neutral defaults and raise data-quality flags.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from statistics import mean
@@ -27,6 +28,12 @@ def _safe_pct_change(series: list[float] | None) -> float | None:
     if first is None or last is None or first == 0:
         return None
     return (last - first) / first * 100.0
+
+
+def _clamp(value: float | None, low: float, high: float, default: float = 0.0) -> float:
+    if value is None or math.isnan(value):
+        return default
+    return max(low, min(high, value))
 
 
 def _atr(
@@ -547,6 +554,7 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
     # New high-priority factors
     fvm = raw.financials_vs_materials or {}
     feats["financials_minus_materials_1d_pct"] = fvm.get("diff_1d_pct")
+    feats["financials_minus_materials_2d_pct"] = fvm.get("diff_2d_pct")
     feats["financials_minus_materials_3d_pct"] = fvm.get("diff_3d_pct")
     feats["financials_minus_materials_5d_pct"] = fvm.get("diff_5d_pct")
     feats["financials_minus_materials_weighted_pct"] = fvm.get("weighted_diff_pct")
@@ -578,8 +586,20 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
     if not hw:
         flags.heavyweight_idio = _source_flag(statuses.get("heavyweight_idio"))
 
+    asx_open = _hist("asx_cash", "open") or []
+
     # Technical indicators (derived from ASX cash closes)
     rsi = compute_rsi(asx_close) if len(asx_close) >= 15 else None
+    rsi_previous = (
+        compute_rsi(asx_close[:-1])
+        if len(asx_close) >= 16
+        else None
+    )
+    rsi_slope = (
+        rsi - rsi_previous
+        if rsi is not None and rsi_previous is not None
+        else None
+    )
     rsi_score = score_rsi(rsi)
     ath_distance = (
         compute_distance_from_high(asx_close) if len(asx_close) >= 2 else None
@@ -600,6 +620,8 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
     profit_taking_combo = compute_profit_taking_combo(rsi, ath_distance, index_5d_return)
 
     feats["rsi_14"] = rsi
+    feats["rsi_previous_14"] = rsi_previous
+    feats["rsi_slope"] = rsi_slope
     feats["rsi_score"] = rsi_score
     feats["ath_distance_pct"] = ath_distance
     feats["high_20d_distance_pct"] = high_20d_distance
@@ -610,6 +632,30 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
     feats["bollinger_position"] = bollinger_position
     feats["bollinger_score"] = bollinger_score
     feats["profit_taking_combo_score"] = profit_taking_combo
+
+    # Secondary-model short-term features
+    if len(asx_open) >= 1 and len(asx_close) >= 2:
+        last_open = asx_open[-1]
+        prev_close = asx_close[-2]
+        if prev_close != 0:
+            feats["overnight_gap_pct"] = (last_open - prev_close) / prev_close * 100.0
+
+    gap = feats.get("overnight_gap_pct")
+    session_ret = feats.get("asx_open_to_now_return_pct")
+    if gap is not None and session_ret is not None:
+        if gap > 0 and session_ret < 0:
+            feats["gap_filled_score"] = -1.0
+        elif gap < 0 and session_ret > 0:
+            feats["gap_filled_score"] = 1.0
+        else:
+            feats["gap_filled_score"] = 0.0
+
+    feats["vwap_distance_pct"] = session_ret
+
+    market_breadth = 0.0
+    if session_ret is not None:
+        market_breadth = _clamp(session_ret * 2.0, -1.5, 1.5)
+    feats["market_breadth_score"] = market_breadth
 
     if not asx_close:
         flags.asx_cash = _source_flag(statuses.get("asx_cash"))
@@ -622,7 +668,9 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
             spi_last = spi_series[-1]
             feats["spi_basis_pct"] = (spi_last - asx_last) / asx_last * 100.0
             if len(spi_series) >= 2 and spi_series[-2] != 0:
-                feats["spi_momentum_pct"] = (spi_last - spi_series[-2]) / spi_series[-2] * 100.0
+                spi_momentum = (spi_last - spi_series[-2]) / spi_series[-2] * 100.0
+                feats["spi_momentum_pct"] = spi_momentum
+                feats["spi_short_term_momentum_pct"] = spi_momentum
             if raw.spi_futures.get("cash_proxy"):
                 flags.spi_futures = "stale"
     else:

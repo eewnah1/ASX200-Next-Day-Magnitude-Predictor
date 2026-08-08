@@ -59,6 +59,11 @@ class Repository:
             errors_json=prediction.errors,
             degraded=prediction.degraded,
             degraded_sources_json=prediction.degraded_sources,
+            model=prediction.model,
+            primary_bucket=prediction.primary_bucket,
+            secondary_bucket=prediction.secondary_bucket,
+            primary_score=prediction.primary_score,
+            secondary_score=prediction.secondary_score,
         )
         self.session.add(record)
         self.session.commit()
@@ -167,4 +172,9 @@ class Repository:
             errors=record.errors_json or [],
             degraded=record.degraded if record.degraded is not None else False,
             degraded_sources=record.degraded_sources_json or [],
+            model=record.model or "Primary",
+            primary_bucket=record.primary_bucket or "Neutral",
+            secondary_bucket=record.secondary_bucket,
+            primary_score=record.primary_score or 0.0,
+            secondary_score=record.secondary_score or 0.0,
         )

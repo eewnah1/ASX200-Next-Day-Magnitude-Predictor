@@ -52,8 +52,10 @@
   <div class="grid" id="probs"></div>
 
   <div class="card" style="margin-bottom:24px;">
-    <h2>Primary bucket</h2>
-    <div id="bucket" class="big">-</div>
+    <h2>Active model</h2>
+    <div id="model" class="big">-</div>
+    <div id="primaryBucket" style="color:var(--muted);margin-top:8px;">Primary bucket: -</div>
+    <div id="secondaryBucket" style="color:var(--muted);display:none;">Secondary bucket: -</div>
     <div id="confidence" style="color:var(--muted)">Confidence: -</div>
     <div id="generated" style="color:var(--muted);font-size:0.9rem;margin-top:8px;">Generated: -</div>
     <div id="dataAsOf" style="color:var(--muted);font-size:0.9rem;margin-top:4px;">Data as of: -</div>
@@ -61,8 +63,13 @@
 
   <div class="grid">
     <div class="card" style="grid-column: 1 / -1;">
-      <h2>Factor contributions</h2>
-      <table id="factorsTable"><thead><tr><th>Factor</th><th>Raw value</th><th>Direction</th><th>Weight</th><th>Score</th><th>Note</th></tr></thead><tbody></tbody></table>
+      <h2>Primary model factor contributions</h2>
+      <table id="primaryFactorsTable"><thead><tr><th>Factor</th><th>Raw value</th><th>Direction</th><th>Weight</th><th>Score</th><th>Note</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="card" style="grid-column: 1 / -1;">
+      <h2>Secondary model factor contributions</h2>
+      <table id="secondaryFactorsTable"><thead><tr><th>Factor</th><th>Raw value</th><th>Direction</th><th>Weight</th><th>Score</th><th>Note</th></tr></thead><tbody></tbody></table>
+      <div id="secondaryPlaceholder" style="color:var(--muted);margin-top:8px;">Secondary model not active.</div>
     </div>
     <div class="card">
       <h2>Data source health</h2>
@@ -133,7 +140,15 @@
         <div class="card"><h2>Mid (0.3–0.5%)</h2><div class="big" style="color:var(--mid)">${(probs.mid*100).toFixed(1)}%</div><div class="bar"><div class="bar-fill" style="width:${probs.mid*100}%;background:var(--mid)"></div></div></div>
         <div class="card"><h2>High (&gt;0.5%)</h2><div class="big" style="color:var(--high)">${(probs.high*100).toFixed(1)}%</div><div class="bar"><div class="bar-fill" style="width:${probs.high*100}%;background:var(--high)"></div></div></div>
       `;
-      $('bucket').textContent = p.bucket;
+      $('model').textContent = p.model || 'Primary';
+      $('primaryBucket').textContent = `Primary bucket: ${p.primary_bucket || p.bucket || '-'} (score ${(p.primary_score || 0).toFixed(2)})`;
+      const secEl = $('secondaryBucket');
+      if (p.secondary_bucket) {
+        secEl.style.display = 'block';
+        secEl.textContent = `Secondary bucket: ${p.secondary_bucket} (score ${(p.secondary_score || 0).toFixed(2)})`;
+      } else {
+        secEl.style.display = 'none';
+      }
       $('confidence').textContent = `Confidence: ${(p.confidence*100).toFixed(1)}%`;
       $('generated').textContent = `Generated: ${fmtAest(p.generated_at)}`;
       $('dataAsOf').textContent = `Data as of: ${fmtAest(p.data_as_of || p.features.fetched_at)} (latest available)`;
@@ -144,21 +159,42 @@
         $('degraded').innerHTML = '';
       }
 
-      const factors = p.factor_contributions || [];
-      if (factors.length) {
-        $('factorsTable').querySelector('tbody').innerHTML = factors.map(f => `
-          <tr>
+      function renderFactors(tableId, factors) {
+        const tbody = $(tableId).querySelector('tbody');
+        if (!factors.length) {
+          tbody.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">No data</td></tr>';
+          return;
+        }
+        tbody.innerHTML = factors.map(f => {
+          let raw = 'n/a';
+          if (f.raw_value !== null && f.raw_value !== undefined) {
+            const num = Number(f.raw_value);
+            raw = isNaN(num) ? f.raw_value : num.toFixed(2) + ' ' + (f.raw_unit || '');
+          }
+          return `<tr>
             <td>${f.name} <span class="tag ${tagClass(f.direction)}">${f.direction}</span></td>
-            <td>${f.raw_value !== null && f.raw_value !== undefined ? f.raw_value.toFixed(2) + ' ' + (f.raw_unit || '') : 'n/a'}</td>
+            <td>${raw}</td>
             <td>${f.direction}</td>
             <td>${(f.weight * 100).toFixed(1)}%</td>
             <td>${f.score.toFixed(4)}</td>
             <td style="color:var(--muted)">${f.note}</td>
-          </tr>
-        `).join('');
+          </tr>`;
+        }).join('');
+      }
+      const factors = p.factor_contributions || [];
+      const primary = factors.filter(f => (f.group || '').toLowerCase() === 'primary');
+      const secondary = factors.filter(f => (f.group || '').toLowerCase() === 'secondary');
+      renderFactors('primaryFactorsTable', primary);
+      renderFactors('secondaryFactorsTable', secondary);
+      if (secondary.length) {
+        $('secondaryPlaceholder').style.display = 'none';
       } else {
+        $('secondaryPlaceholder').style.display = 'block';
+      }
+      if (!factors.length) {
         const fb = p.factor_breakdown || {};
-        $('factorsTable').querySelector('tbody').innerHTML = Object.entries(fb).map(([k,v]) => `<tr><td>${k}</td><td>${v}</td><td></td><td></td><td></td><td></td></tr>`).join('');
+        $('primaryFactorsTable').querySelector('tbody').innerHTML = Object.entries(fb).map(([k,v]) => `<tr><td>${k}</td><td>${v}</td><td></td><td></td><td></td><td></td></tr>`).join('');
+        $('secondaryFactorsTable').querySelector('tbody').innerHTML = '';
       }
 
       const statuses = p.source_status || (p.features && p.features.source_status) || [];

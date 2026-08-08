@@ -76,9 +76,17 @@ class FeatureVector(BaseModel):
     # SPI basis / futures momentum
     spi_basis_pct: float | None = None
     spi_momentum_pct: float | None = None
+    spi_short_term_momentum_pct: float | None = None
+
+    # Secondary-model short-term inputs
+    overnight_gap_pct: float | None = None
+    gap_filled_score: float | None = None
+    vwap_distance_pct: float | None = None
+    market_breadth_score: float | None = None
 
     # New high-priority factors
     financials_minus_materials_1d_pct: float | None = None
+    financials_minus_materials_2d_pct: float | None = None
     financials_minus_materials_3d_pct: float | None = None
     financials_minus_materials_5d_pct: float | None = None
     financials_minus_materials_weighted_pct: float | None = None
@@ -97,6 +105,8 @@ class FeatureVector(BaseModel):
 
     # Technical indicators
     rsi_14: float | None = None
+    rsi_previous_14: float | None = None
+    rsi_slope: float | None = None
     rsi_score: float | None = None
     ath_distance_pct: float | None = None
     high_20d_distance_pct: float | None = None
@@ -135,6 +145,7 @@ class FactorContribution(BaseModel):
     weight: float = 0.0
     score: float = 0.0
     note: str = ""
+    group: str = ""  # e.g. "Primary" or "Secondary"
 
 
 class FactorBreakdown(BaseModel):
@@ -169,6 +180,11 @@ class Prediction(BaseModel):
     errors: list[str] = Field(default_factory=list)
     degraded: bool = False
     degraded_sources: list[str] = Field(default_factory=list)
+    model: str = "Primary"  # Primary | Secondary
+    primary_bucket: str = "Neutral"
+    secondary_bucket: str | None = None
+    primary_score: float = 0.0
+    secondary_score: float = 0.0
 
 
 class Actual(BaseModel):

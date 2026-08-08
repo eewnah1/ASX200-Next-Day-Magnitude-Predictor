@@ -36,6 +36,11 @@ class PredictionRecord(Base):
     errors_json: Mapped[list] = mapped_column(JSON, default=list)
     degraded: Mapped[bool] = mapped_column(Boolean, default=False)
     degraded_sources_json: Mapped[list] = mapped_column(JSON, default=list)
+    model: Mapped[str] = mapped_column(String(20), default="Primary")
+    primary_bucket: Mapped[str] = mapped_column(String(20), default="Neutral")
+    secondary_bucket: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    primary_score: Mapped[float] = mapped_column(Float, default=0.0)
+    secondary_score: Mapped[float] = mapped_column(Float, default=0.0)
 
     actual: Mapped["ActualRecord"] = relationship(back_populates="prediction", uselist=False)
 
@@ -92,6 +97,11 @@ def _add_missing_columns(engine) -> None:
             ("errors_json", "JSON"),
             ("degraded", "BOOLEAN"),
             ("degraded_sources_json", "JSON"),
+            ("model", "VARCHAR"),
+            ("primary_bucket", "VARCHAR"),
+            ("secondary_bucket", "VARCHAR"),
+            ("primary_score", "FLOAT"),
+            ("secondary_score", "FLOAT"),
         ],
         "actuals": [
             ("actual_return_pct", "FLOAT"),

@@ -1,18 +1,15 @@
-"""Rule-based scoring engine for ASX200 next-day magnitude and direction probabilities.
+"""Two-model rule-based scoring engine for ASX200 next-day moves.
 
 Design notes
 ------------
-* The engine is intentionally transparent.  Every factor maps to a logit
-  adjustment for the [low, mid, high] magnitude buckets, and a final softmax
-  turns the combined logit vector into a conditional positive-move distribution.
-* A separate direction model estimates the probability the next-day return is
-  negative (< 0%).  The two pieces are combined to produce the final four
-  buckets: negative, low (0-0.3%), mid (0.3-0.5%), high (>0.5%).
-* Volatility sets the *magnitude baseline* distribution.  The other four
-  factors tilt the baseline toward or away from a large move.
-* Weights from `Settings` scale each factor's contribution; they are normalised
-  internally so the engine is stable regardless of absolute weight size.
-* All missing values are filled with neutral defaults and flagged.
+* Model 1 (Primary) is a high-conviction large-move classifier with exact
+  weights and strict gating rules. It outputs Large Down / Neutral / Large Up.
+* Model 2 (Secondary) activates only when Model 1 is Neutral and extracts a
+  mild directional bias from short-term inputs. It outputs Mild Bearish Bias /
+  Mild Bullish Bias / True Neutral.
+* A legacy four-bucket probability distribution (negative, low, mid, high) is
+  retained for calibration display compatibility. Missing values are filled
+  with neutral defaults and flagged.
 """
 
 from __future__ import annotations
@@ -33,12 +30,40 @@ from asx200_mag_predictor.models import (
     FeatureVector,
     Prediction,
 )
+from asx200_mag_predictor.scoring.features import (
+    score_china_steel_property,
+    score_financials_vs_materials,
+    score_heavyweight_idio,
+    score_housing_credit_pulse,
+)
 from asx200_mag_predictor.timezone import now_sydney
 
 logger = get_logger(__name__)
 
 BUCKET_LABELS = ["<0%", "0%-0.3%", "0.3%-0.5%", ">0.5%"]
 BUCKET_KEYS = ["negative", "low", "mid", "high"]
+
+PRIMARY_BUCKETS = ["Large Down", "Neutral", "Large Up"]
+SECONDARY_BUCKETS = ["Mild Bearish Bias", "True Neutral", "Mild Bullish Bias"]
+
+# Exact Model 1 weights (sum to 1.10). Each weight is multiplied by a signed
+# score typically in the [-2.5, +2.5] range.
+PRIMARY_WEIGHTS: dict[str, float] = {
+    "financials_vs_materials": 0.13,
+    "iron_ore": 0.09,
+    "rsi": 0.10,
+    "ath_distance": 0.09,
+    "housing_credit": 0.09,
+    "heavyweight_idio": 0.08,
+    "us_equity_lead": 0.10,
+    "momentum_exhaustion": 0.08,
+    "china_steel_property": 0.07,
+    "gold_silver": 0.06,
+    "spi": 0.05,
+    "a_vix": 0.06,
+    "alignment": 0.05,
+    "catalyst": 0.05,
+}
 
 # Baseline magnitude distributions indexed by volatility regime (0=calm ... 4=extreme).
 # Each vector is [low, mid, high] for *positive* moves and sums to 1.
@@ -69,7 +94,7 @@ def _sigmoid(x: float) -> float:
     return z / (1.0 + z)
 
 
-def _clamp(value: float | None, low: float, high: float, default: float) -> float:
+def _clamp(value: float | None, low: float, high: float, default: float = 0.0) -> float:
     if value is None or math.isnan(value):
         return default
     return max(low, min(high, value))
@@ -83,10 +108,10 @@ def _direction_label(value: float, bullish: str = "bullish", bearish: str = "bea
     return "neutral"
 
 
-def _fmt_pct(value: float | None) -> str:
+def _fmt_pct(value: float | None, unit: str = "%") -> str:
     if value is None:
         return "n/a"
-    return f"{value:+.2f}%"
+    return f"{value:+.2f}{unit}"
 
 
 class ScoringEngine:
@@ -127,14 +152,80 @@ class ScoringEngine:
         data_quality_flags: DataQualityFlags | None = None,
         prediction_for: Any | None = None,
     ) -> Prediction:
-        """Return a calibrated prediction for the supplied feature set."""
+        """Return a two-model prediction for the supplied feature set."""
         fv = self._coerce(features)
         flags = data_quality_flags or DataQualityFlags()
         fv, flags = self._fill_missing(fv, flags)
 
         prediction_for_date = self._resolve_prediction_for(prediction_for)
 
-        # Factor-level deltas and raw scores.
+        # Legacy four-bucket probability distribution is retained for display.
+        probs, factor_breakdown = self._legacy_probabilities(fv)
+
+        # Model 1: primary high-conviction large-move classifier.
+        primary_contributions, primary_score, primary_bucket = self._primary_model(fv)
+
+        # Model 2: secondary neutral-zone bias extractor (only if Model 1 is Neutral).
+        secondary_contributions, secondary_score, secondary_bucket = self._secondary_model(
+            fv, primary_bucket
+        )
+
+        factor_contributions = primary_contributions + secondary_contributions
+
+        # The primary bucket is used for calibration and as the headline bucket.
+        # The UI will display the secondary bucket when Model 2 is active.
+        model = self._active_model_name(primary_bucket, secondary_bucket)
+        confidence = self._compute_two_model_confidence(
+            primary_bucket, primary_score, secondary_bucket, secondary_score, fv
+        )
+        degraded, degraded_sources = self._degraded_status(fv, flags)
+
+        notes: list[str] = []
+        notes.append(f"Active model: {model}; primary bucket: {primary_bucket}")
+        if primary_bucket == "Neutral" and secondary_bucket and secondary_bucket != "True Neutral":
+            notes.append(
+                f"Secondary model selected {secondary_bucket} (score {secondary_score:.2f})."
+            )
+        if primary_bucket != "Neutral":
+            notes.append(
+                f"Primary model {primary_bucket} (score {primary_score:.2f}); "
+                f"gating RSI={_fmt_pct(fv.rsi_14, unit='index')}, "
+                f"ATH={_fmt_pct(fv.ath_distance_pct)}"
+            )
+        if degraded:
+            notes.append(f"Degraded prediction – missing: {', '.join(degraded_sources)}.")
+
+        return Prediction(
+            prediction_for_date=prediction_for_date,
+            data_as_of=fv.data_as_of,
+            features=fv,
+            probabilities=BucketProbabilities(
+                negative=round(float(probs[0]), 4),
+                low=round(float(probs[1]), 4),
+                mid=round(float(probs[2]), 4),
+                high=round(float(probs[3]), 4),
+            ),
+            bucket=primary_bucket,
+            confidence=round(confidence, 4),
+            factor_breakdown=factor_breakdown,
+            factor_contributions=factor_contributions,
+            notes=notes,
+            data_quality_flags=flags,
+            source_status=fv.source_status,
+            errors=fv.errors,
+            degraded=degraded,
+            degraded_sources=degraded_sources,
+            model=model,
+            primary_bucket=primary_bucket,
+            secondary_bucket=secondary_bucket,
+            primary_score=round(primary_score, 4),
+            secondary_score=round(secondary_score, 4),
+        )
+
+    # ------------------------------------------------------------------ helpers
+
+    def _legacy_probabilities(self, fv: FeatureVector) -> tuple[np.ndarray, FactorBreakdown]:
+        """Compute the legacy four-bucket signed probability distribution."""
         vol_delta, vol_high = self._volatility_delta(fv)
         cat_delta, cat_high = self._catalyst_delta(fv)
         align_delta, align_high = self._alignment_delta(fv)
@@ -183,9 +274,6 @@ class ScoringEngine:
         )
         probs = probs / probs.sum()
 
-        bucket_index = int(np.argmax(probs))
-        bucket_label = BUCKET_LABELS[bucket_index]
-
         factor_breakdown = FactorBreakdown(
             volatility=round(float(vol_high) * self.weights["volatility"], 4),
             catalyst=round(float(cat_high) * self.weights["catalyst"], 4),
@@ -194,68 +282,532 @@ class ScoringEngine:
             spi_basis=round(float(spi_high) * self.weights["spi_basis"], 4),
             direction=round(float(direction_score), 4),
         )
+        return probs, factor_breakdown
 
-        factor_contributions = self._build_factor_contributions(
-            fv,
-            vol_high,
-            cat_high,
-            align_high,
-            sess_high,
-            spi_high,
-            fvm_high,
-            hc_high,
-            china_high,
-            hw_high,
-            rsi_high,
-            ath_high,
-            mom_high,
-            boll_high,
+    def _primary_model(
+        self, fv: FeatureVector
+    ) -> tuple[list[FactorContribution], float, str]:
+        """Model 1: high-conviction large-move classifier with exact weights."""
+        contributions: list[FactorContribution] = []
+        total = 0.0
+
+        def add(
+            name: str,
+            raw_value: float | None,
+            raw_unit: str,
+            raw_score: float,
+            weight: float,
+            note: str,
+        ) -> None:
+            nonlocal total
+            weighted = round(_clamp(raw_score, -3.0, 3.0, 0.0) * weight, 4)
+            total += weighted
+            contributions.append(
+                FactorContribution(
+                    name=name,
+                    raw_value=raw_value,
+                    raw_unit=raw_unit,
+                    direction=_direction_label(_clamp(raw_score, -3.0, 3.0, 0.0)),
+                    weight=round(weight, 4),
+                    score=weighted,
+                    note=note,
+                    group="Primary",
+                )
+            )
+
+        # 1. Financials vs Materials Relative Strength (13%)
+        fvm_raw = fv.financials_minus_materials_weighted_pct
+        fvm_score = _clamp((fv.financials_vs_materials_score or 0.0) * 2.0, -3.0, 3.0)
+        fvm_note = (
+            f"1d {_fmt_pct(fv.financials_minus_materials_1d_pct)}, "
+            f"3d {_fmt_pct(fv.financials_minus_materials_3d_pct)}, "
+            f"5d {_fmt_pct(fv.financials_minus_materials_5d_pct)}"
+            if fvm_raw is not None
+            else "No Financials/Materials data"
+        )
+        add(
+            "Financials vs Materials Relative Strength",
+            fvm_raw,
+            "%",
+            fvm_score,
+            PRIMARY_WEIGHTS["financials_vs_materials"],
+            fvm_note,
         )
 
-        confidence = self._compute_confidence(probs, fv)
-        degraded, degraded_sources = self._degraded_status(fv, flags)
+        # 2. Iron Ore change (9%)
+        iron = fv.iron_ore_change_pct
+        iron_score = _clamp((iron or 0.0) / 1.2, -3.0, 3.0)
+        add(
+            "Iron Ore change",
+            iron,
+            "%",
+            iron_score,
+            PRIMARY_WEIGHTS["iron_ore"],
+            f"Iron ore {_fmt_pct(iron)}; positive supports materials, negative weighs",
+        )
 
-        notes: list[str] = []
-        if baseline_probs[-1] > 0.40:
-            notes.append(f"Elevated vol baseline (regime {fv.vol_regime}) tilts toward >0.5%.")
-        if fv.catalyst_score and fv.catalyst_score >= 3:
-            notes.append(f"High catalyst score ({fv.catalyst_score}) from scheduled events.")
-        if fv.cross_asset_magnitude and fv.cross_asset_magnitude > 1.0:
-            notes.append(f"Cross-asset magnitude {fv.cross_asset_magnitude:.2f}% is meaningful.")
-        if p_negative > 0.55:
-            notes.append(
-                f"Bearish direction score {direction_score:.2f} raises probability of a down day."
-            )
-        elif p_negative < 0.45:
-            notes.append(
-                f"Bullish direction score {direction_score:.2f} lowers probability of a down day."
-            )
-        if degraded:
-            notes.append(f"Degraded prediction – missing: {', '.join(degraded_sources)}.")
+        # 3. RSI (14) Overbought/Oversold (10%)
+        rsi = fv.rsi_14
+        rsi_score_val = _clamp((fv.rsi_score or 0.0) * 2.0, -3.0, 3.0)
+        add(
+            "RSI (14) Overbought / Oversold",
+            rsi,
+            "index",
+            rsi_score_val,
+            PRIMARY_WEIGHTS["rsi"],
+            f"RSI {rsi:.1f}" if rsi is not None else "No RSI data",
+        )
 
-        return Prediction(
-            prediction_for_date=prediction_for_date,
-            data_as_of=fv.data_as_of,
-            features=fv,
-            probabilities=BucketProbabilities(
-                negative=round(float(probs[0]), 4),
-                low=round(float(probs[1]), 4),
-                mid=round(float(probs[2]), 4),
-                high=round(float(probs[3]), 4),
+        # 4. Distance from All-Time High (9%)
+        ath = fv.ath_distance_pct
+        ath_score_val = _clamp(fv.ath_score or 0.0, -1.5, 0.5)
+        add(
+            "Distance from All-Time High",
+            ath,
+            "%",
+            ath_score_val,
+            PRIMARY_WEIGHTS["ath_distance"],
+            (
+                f"ATH distance {_fmt_pct(ath)}; 20d high {_fmt_pct(fv.high_20d_distance_pct)}, "
+                f"50d high {_fmt_pct(fv.high_50d_distance_pct)}"
+                if ath is not None
+                else "No price history"
             ),
-            bucket=bucket_label,
-            confidence=round(confidence, 4),
-            factor_breakdown=factor_breakdown,
-            factor_contributions=factor_contributions,
-            notes=notes,
-            data_quality_flags=flags,
-            source_status=fv.source_status,
-            errors=fv.errors,
-            degraded=degraded,
-            degraded_sources=degraded_sources,
         )
 
-    # ------------------------------------------------------------------ helpers
+        # 5. Housing & Credit Pulse (9%)
+        hc = fv.housing_credit_pulse_score
+        hc_score_val = _clamp(
+            (score_housing_credit_pulse(hc) or 0.0) * 2.0, -3.0, 3.0
+        )
+        add(
+            "Housing & Credit Pulse",
+            hc,
+            "0-10",
+            hc_score_val,
+            PRIMARY_WEIGHTS["housing_credit"],
+            (
+                f"pulse {hc:.1f}/10"
+                if hc is not None
+                else "No housing/credit proxy data"
+            ),
+        )
+
+        # 6. Heavyweight Idiosyncratic Score – CBA + BHP (8%)
+        hw = fv.heavyweight_idio_return_pct
+        hw_score_val = _clamp(
+            (score_heavyweight_idio(hw, fv.heavyweight_idio_news_boost) or 0.0) * 2.0,
+            -3.0,
+            3.0,
+        )
+        hw_note = (
+            f"CBA+BHP weighted {hw:+.2f}%"
+            + (
+                f", news boost +{fv.heavyweight_idio_news_boost:.0%}"
+                if fv.heavyweight_idio_news_boost
+                else ", no major idiosyncratic news boost"
+            )
+            if hw is not None
+            else "No CBA/BHP data"
+        )
+        add(
+            "Heavyweight Idiosyncratic Score – CBA + BHP",
+            hw,
+            "%",
+            hw_score_val,
+            PRIMARY_WEIGHTS["heavyweight_idio"],
+            hw_note,
+        )
+
+        # 7. US Equity Lead (10%)
+        us_changes = [
+            ("S&P", fv.sp500_change_pct),
+            ("Nasdaq", fv.nasdaq_change_pct),
+            ("Dow", fv.dow_change_pct),
+            ("US futures", fv.us_futures_change_pct),
+        ]
+        us_values = [v for _, v in us_changes if v is not None]
+        us_avg = sum(us_values) / len(us_values) if us_values else 0.0
+        us_note = ", ".join(f"{n}={_fmt_pct(v)}" for n, v in us_changes if v is not None)
+        us_score = _clamp(us_avg / 1.0, -3.0, 3.0)
+        add(
+            "US Equity Lead (S&P / Nasdaq / Dow overnight move)",
+            us_avg,
+            "%",
+            us_score,
+            PRIMARY_WEIGHTS["us_equity_lead"],
+            us_note or "No US equity data",
+        )
+
+        # 8. Short-term Momentum Exhaustion (8%)
+        mom = fv.index_5d_return_pct
+        mom_score_val = _clamp(
+            (fv.momentum_exhaustion_score or 0.0) * 3.0
+            + (fv.profit_taking_combo_score or 0.0) * 1.0,
+            -3.0,
+            3.0,
+        )
+        add(
+            "Short-term Momentum Exhaustion",
+            mom,
+            "%",
+            mom_score_val,
+            PRIMARY_WEIGHTS["momentum_exhaustion"],
+            (
+                f"5d return {_fmt_pct(mom)}"
+                + (
+                    " – profit-taking combo triggered"
+                    if fv.profit_taking_combo_score and fv.profit_taking_combo_score < 0
+                    else ""
+                )
+                if mom is not None
+                else "No 5d return data"
+            ),
+        )
+
+        # 9. China Steel / Property Pulse (7%)
+        china = fv.china_steel_property_return_pct
+        china_score_val = _clamp(
+            (score_china_steel_property(china) or 0.0) * 2.5, -3.0, 3.0
+        )
+        add(
+            "China Steel / Property Pulse",
+            china,
+            "%",
+            china_score_val,
+            PRIMARY_WEIGHTS["china_steel_property"],
+            (
+                f"composite {china:+.2f}%"
+                if china is not None
+                else "No China steel/proxy data"
+            ),
+        )
+
+        # 10. Gold & Silver change (6%)
+        if fv.gold_change_pct is not None or fv.silver_change_pct is not None:
+            values = [v for v in [fv.gold_change_pct, fv.silver_change_pct] if v is not None]
+            pm_avg = sum(values) / len(values) if values else 0.0
+            pm_note = (
+                f"gold {_fmt_pct(fv.gold_change_pct)}, "
+                f"silver {_fmt_pct(fv.silver_change_pct)}"
+            )
+        else:
+            pm_avg = 0.0
+            pm_note = "No precious metals data"
+        pm_score = _clamp(pm_avg / 1.0, -3.0, 3.0)
+        add(
+            "Gold & Silver change",
+            pm_avg,
+            "%",
+            pm_score,
+            PRIMARY_WEIGHTS["gold_silver"],
+            pm_note,
+        )
+
+        # 11. SPI 200 Futures bias (5%)
+        spi_basis = _clamp(fv.spi_basis_pct, -2.0, 2.0, 0.0)
+        spi_momentum = _clamp(fv.spi_momentum_pct, -3.0, 3.0, 0.0)
+        spi_combined = (
+            (spi_basis + spi_momentum) / 2.0
+            if (fv.spi_basis_pct is not None or fv.spi_momentum_pct is not None)
+            else 0.0
+        )
+        spi_score = _clamp(spi_combined / 0.5, -3.0, 3.0)
+        add(
+            "SPI 200 Futures bias",
+            spi_combined,
+            "%",
+            spi_score,
+            PRIMARY_WEIGHTS["spi"],
+            f"basis {_fmt_pct(fv.spi_basis_pct)}, momentum {_fmt_pct(fv.spi_momentum_pct)}",
+        )
+
+        # 12. A-VIX / Volatility Regime (6%)
+        a_vix = fv.a_vix
+        vol_regime = fv.vol_regime or 1
+        vix_score = _clamp(
+            -((a_vix or 16.0) - 16.0) / 6.0 - (vol_regime - 1) * 0.4,
+            -3.0,
+            3.0,
+        )
+        add(
+            "A-VIX / Volatility Regime",
+            a_vix,
+            "index",
+            vix_score,
+            PRIMARY_WEIGHTS["a_vix"],
+            f"A-VIX {a_vix or 'n/a'}; regime {vol_regime}",
+        )
+
+        # 13. Overall Alignment Score (5%)
+        alignment = _clamp(fv.cross_asset_alignment_score, -1.0, 1.0, 0.0)
+        alignment_score = _clamp(alignment * 3.0, -3.0, 3.0)
+        magnitude = _clamp(fv.cross_asset_magnitude, 0.0, 5.0, 0.0)
+        add(
+            "Overall Alignment Score",
+            alignment,
+            "score",
+            alignment_score,
+            PRIMARY_WEIGHTS["alignment"],
+            f"alignment {alignment:+.2f}, cross-asset magnitude {magnitude:.2f}%",
+        )
+
+        # 14. Catalyst Score (5%)
+        cat = _clamp(fv.catalyst_score, 0.0, 5.0, 0.0)
+        cat_score = _clamp(-cat / 1.67, -3.0, 3.0)
+        add(
+            "Catalyst Score",
+            cat,
+            "0-5",
+            cat_score,
+            PRIMARY_WEIGHTS["catalyst"],
+            f"{int(fv.high_impact_events_next_24h or 0)} high-impact event(s) in next 24h, "
+            f"{int(fv.high_impact_events_next_48h or 0)} in 48h",
+        )
+
+        # Strict high-conviction gating.
+        rsi_for_gate = _clamp(fv.rsi_14, 0.0, 100.0, 50.0)
+        ath_for_gate = _clamp(fv.ath_distance_pct, -50.0, 50.0, -5.0)
+        if total >= 2.2 and rsi_for_gate <= 68 and ath_for_gate <= -0.7:
+            primary_bucket = "Large Up"
+        elif total <= -2.2 and (rsi_for_gate >= 67 or ath_for_gate >= -1.2):
+            primary_bucket = "Large Down"
+        else:
+            primary_bucket = "Neutral"
+
+        return contributions, round(total, 4), primary_bucket
+
+    def _secondary_model(
+        self, fv: FeatureVector, primary_bucket: str
+    ) -> tuple[list[FactorContribution], float, str | None]:
+        """Model 2: neutral-zone mild-bias extractor. Activates only when primary is Neutral."""
+        if primary_bucket != "Neutral":
+            return [], 0.0, None
+
+        contributions: list[FactorContribution] = []
+        total = 0.0
+        bullish = 0
+        bearish = 0
+
+        def add(
+            name: str,
+            raw_value: float | None,
+            raw_unit: str,
+            raw_score: float,
+            weight: float,
+            note: str,
+        ) -> None:
+            nonlocal total, bullish, bearish
+            score_clamped = _clamp(raw_score, -3.0, 3.0, 0.0)
+            weighted = round(score_clamped * weight, 4)
+            total += weighted
+            if score_clamped > 0.2:
+                bullish += 1
+            elif score_clamped < -0.2:
+                bearish += 1
+            contributions.append(
+                FactorContribution(
+                    name=name,
+                    raw_value=raw_value,
+                    raw_unit=raw_unit,
+                    direction=_direction_label(score_clamped),
+                    weight=round(weight, 4),
+                    score=weighted,
+                    note=note,
+                    group="Secondary",
+                )
+            )
+
+        # 1. Very short-term SPI 200 futures momentum (15%)
+        spi_short = fv.spi_short_term_momentum_pct
+        if spi_short is None:
+            spi_short = fv.spi_momentum_pct
+        spi_score = _clamp((spi_short or 0.0) / 0.5, -3.0, 3.0)
+        add(
+            "Very short-term SPI 200 futures momentum",
+            spi_short,
+            "%",
+            spi_score,
+            0.15,
+            "2-4 hour SPI futures bias (daily fallback when intraday unavailable)",
+        )
+
+        # 2. Financials vs Materials relative strength (1-day and 2-day) (15%)
+        fvm_1d = fv.financials_minus_materials_1d_pct
+        fvm_2d = fv.financials_minus_materials_2d_pct
+        fvm_1d_score = _clamp(
+            (score_financials_vs_materials(fvm_1d) or 0.0) * 2.0, -3.0, 3.0
+        )
+        fvm_2d_score = _clamp(
+            (score_financials_vs_materials(fvm_2d) or 0.0) * 2.0, -3.0, 3.0
+        )
+        fvm_score = _clamp((fvm_1d_score + fvm_2d_score) / 2.0, -3.0, 3.0)
+        fvm_note = (
+            f"1d {_fmt_pct(fvm_1d)}, 2d {_fmt_pct(fvm_2d)}"
+            if fvm_1d is not None or fvm_2d is not None
+            else "No Financials/Materials short-term data"
+        )
+        add(
+            "Financials vs Materials relative strength (1d & 2d)",
+            fvm_1d,
+            "%",
+            fvm_score,
+            0.15,
+            fvm_note,
+        )
+
+        # 3. RSI(14) position and slope (15%)
+        rsi = fv.rsi_14
+        rsi_position = _clamp((fv.rsi_score or 0.0) * 1.5, -3.0, 3.0)
+        slope = _clamp(fv.rsi_slope, -10.0, 10.0, 0.0)
+        slope_score = _clamp(slope * 0.15, -1.0, 1.0)
+        rsi_score = _clamp(rsi_position + slope_score, -3.0, 3.0)
+        add(
+            "RSI(14) position and slope",
+            rsi,
+            "index",
+            rsi_score,
+            0.15,
+            (
+                f"RSI {rsi:.1f}, slope {slope:+.2f}pt"
+                if rsi is not None
+                else "No RSI data"
+            ),
+        )
+
+        # 4. Distance from VWAP / opening range (10%)
+        vwap = fv.vwap_distance_pct
+        if vwap is None:
+            vwap = fv.asx_open_to_now_return_pct
+        vwap_score = _clamp((vwap or 0.0) / 0.3, -3.0, 3.0)
+        add(
+            "Distance from VWAP / opening range",
+            vwap,
+            "%",
+            vwap_score,
+            0.10,
+            "Distance from session open / VWAP proxy",
+        )
+
+        # 5. Early session volume and advance-decline behaviour (15%)
+        session_ret = _clamp(fv.asx_open_to_now_return_pct, -2.0, 2.0, 0.0)
+        vol_ratio = fv.current_volume_vs_20d_avg or 1.0
+        if session_ret > 0.15 and vol_ratio > 1.1:
+            vol_score = 1.5
+        elif session_ret < -0.15 and vol_ratio > 1.1:
+            vol_score = -1.5
+        elif session_ret > 0.15:
+            vol_score = 0.8
+        elif session_ret < -0.15:
+            vol_score = -0.8
+        else:
+            vol_score = 0.0
+        vol_score = _clamp(
+            vol_score + (fv.market_breadth_score or 0.0), -3.0, 3.0
+        )
+        add(
+            "Early session volume and advance-decline behaviour",
+            fv.asx_open_to_now_return_pct,
+            "%",
+            vol_score,
+            0.15,
+            (
+                f"session return {_fmt_pct(fv.asx_open_to_now_return_pct)}, "
+                f"volume ratio {vol_ratio:.2f}x"
+                if fv.asx_open_to_now_return_pct is not None
+                else "No session data"
+            ),
+        )
+
+        # 6. Overnight gap direction + whether it is being filled (15%)
+        gap = fv.overnight_gap_pct
+        session_ret = fv.asx_open_to_now_return_pct or 0.0
+        if gap is None:
+            gap_score = 0.0
+        else:
+            if (gap > 0 and session_ret < 0) or (gap < 0 and session_ret > 0):
+                # Gap is being filled; score opposite to the gap direction.
+                gap_score = -_clamp(abs(gap) / 0.4, 0.0, 3.0) * (1 if gap > 0 else -1)
+            else:
+                # Gap extending / not filled; score with the gap direction.
+                gap_score = _clamp(abs(gap) / 0.4, 0.0, 3.0) * (1 if gap > 0 else -1)
+            gap_score = _clamp(gap_score + (fv.gap_filled_score or 0.0), -3.0, 3.0)
+        add(
+            "Overnight gap direction + fill",
+            gap,
+            "%",
+            gap_score,
+            0.15,
+            "Overnight gap vs current session direction",
+        )
+
+        # 7. Micro sensitivity to Housing/Credit and Iron Ore (15%)
+        hc = fv.housing_credit_pulse_score
+        iron = fv.iron_ore_change_pct
+        hc_micro = _clamp((score_housing_credit_pulse(hc) or 0.0) * 1.5, -3.0, 3.0)
+        iron_micro = _clamp((iron or 0.0) / 1.5, -3.0, 3.0)
+        micro_score = _clamp((hc_micro + iron_micro) / 2.0, -3.0, 3.0)
+        add(
+            "Micro Housing/Credit and Iron Ore",
+            iron,
+            "%",
+            micro_score,
+            0.15,
+            (
+                f"housing pulse {hc:.1f}/10, iron ore {_fmt_pct(iron)}"
+                if hc is not None
+                else f"iron ore {_fmt_pct(iron)}"
+            ),
+        )
+
+        # Resolve secondary bucket.
+        if total >= 0.7 and bullish >= 4 and bearish <= 2:
+            secondary_bucket = "Mild Bullish Bias"
+        elif total <= -0.7 and bearish >= 4 and bullish <= 2:
+            secondary_bucket = "Mild Bearish Bias"
+        else:
+            secondary_bucket = "True Neutral"
+
+        return contributions, round(total, 4), secondary_bucket
+
+    def _active_model_name(self, primary_bucket: str, secondary_bucket: str | None) -> str:
+        if primary_bucket != "Neutral":
+            return "Primary"
+        if secondary_bucket and secondary_bucket != "True Neutral":
+            return "Secondary"
+        if secondary_bucket == "True Neutral":
+            return "Secondary (True Neutral)"
+        return "Primary"
+
+    def _compute_two_model_confidence(
+        self,
+        primary_bucket: str,
+        primary_score: float,
+        secondary_bucket: str | None,
+        secondary_score: float,
+        fv: FeatureVector,
+    ) -> float:
+        """Confidence reflects distance from neutral and data quality."""
+        if primary_bucket != "Neutral":
+            base_conf = min(1.0, max(0.55, abs(primary_score) / 3.0))
+        else:
+            if secondary_bucket and secondary_bucket != "True Neutral":
+                base_conf = min(0.85, 0.55 + abs(secondary_score) / 2.0)
+            else:
+                base_conf = 0.5
+
+        def _status(s: Any) -> str | None:
+            if isinstance(s, DataSourceStatus):
+                return s.status
+            if isinstance(s, dict):
+                return s.get("status")
+            return getattr(s, "status", None)
+
+        flag_count = sum(
+            1 for s in (fv.source_status or []) if _status(s) not in ("ok", None)
+        )
+        penalty = min(flag_count * 0.05, 0.25)
+        return max(0.2, min(1.0, base_conf - penalty))
 
     def _coerce(self, features: FeatureVector | dict[str, Any]) -> FeatureVector:
         if isinstance(features, FeatureVector):
@@ -548,318 +1100,10 @@ class ScoringEngine:
                 degraded_sources.append(k)
         return bool(degraded_sources), degraded_sources
 
-    def _build_factor_contributions(
-        self,
-        fv: FeatureVector,
-        vol_high: float,
-        cat_high: float,
-        align_high: float,
-        sess_high: float,
-        spi_high: float,
-        fvm_high: float,
-        hc_high: float,
-        china_high: float,
-        hw_high: float,
-        rsi_high: float,
-        ath_high: float,
-        mom_high: float,
-        boll_high: float,
-    ) -> list[FactorContribution]:
-        """Build the human-readable factor contribution list."""
-        # 1. US Equity Lead
-        us_changes = [
-            ("S&P", fv.sp500_change_pct),
-            ("Nasdaq", fv.nasdaq_change_pct),
-            ("Dow", fv.dow_change_pct),
-            ("US futures", fv.us_futures_change_pct),
-        ]
-        us_values = [v for _, v in us_changes if v is not None]
-        us_avg = sum(us_values) / len(us_values) if us_values else None
-        us_note = ", ".join(f"{n}={_fmt_pct(v)}" for n, v in us_changes if v is not None)
-        us_note = us_note or "No US equity data"
-        us_score = _clamp(us_avg, -2.0, 2.0, 0.0) if us_avg is not None else 0.0
-
-        # 2. SPI futures bias
-        spi_basis = _clamp(fv.spi_basis_pct, -2.0, 2.0, 0.0)
-        spi_momentum = _clamp(fv.spi_momentum_pct, -3.0, 3.0, 0.0)
-        spi_combined = (
-            (spi_basis + spi_momentum) / 2.0
-            if (fv.spi_basis_pct is not None or fv.spi_momentum_pct is not None)
-            else None
-        )
-        spi_note = f"basis {_fmt_pct(fv.spi_basis_pct)}, momentum {_fmt_pct(fv.spi_momentum_pct)}"
-        spi_score = _clamp(spi_combined, -1.0, 1.0, 0.0) if spi_combined is not None else 0.0
-
-        # 3. Iron ore
-        iron = _clamp(fv.iron_ore_change_pct, -10.0, 10.0, 0.0)
-
-        # 4. Gold & Silver
-        if fv.gold_change_pct is not None or fv.silver_change_pct is not None:
-            values = [v for v in [fv.gold_change_pct, fv.silver_change_pct] if v is not None]
-            pm_avg = sum(values) / len(values) if values else 0.0
-            pm_note = (
-                f"gold {_fmt_pct(fv.gold_change_pct)}, silver {_fmt_pct(fv.silver_change_pct)}"
-            )
-            pm_dir = _direction_label(pm_avg)
-        else:
-            pm_avg = None
-            pm_note = "No precious metals data"
-            pm_dir = "neutral"
-
-        # 5. AUD/USD
-        aud = _clamp(fv.aud_usd_change_pct, -5.0, 5.0, 0.0)
-
-        # 6. Volatility
-        realized = f"{fv.realized_vol_annual:.1f}%" if fv.realized_vol_annual is not None else "n/a"
-        vol_note = f"A-VIX {fv.a_vix or 'n/a'}, realised {realized}; regime {fv.vol_regime}"
-        # High volatility is treated as a tail/negative tail risk for equities.
-        vol_dir = "bearish" if (fv.vol_regime or 0) >= 2 else "bullish"
-
-        # 7. Catalyst
-        cat = _clamp(fv.catalyst_score, 0.0, 5.0, 0.0)
-
-        # 8. ASX session
-        session_ret = _clamp(fv.asx_open_to_now_return_pct, -5.0, 5.0, 0.0)
-        session_date = (fv.sources or {}).get("asx_session_date", "latest session")
-        session_fallback = (fv.sources or {}).get("asx_session_fallback")
-        session_return_fmt = _fmt_pct(fv.asx_open_to_now_return_pct)
-        session_note = (
-            f"{fv.asx_session_character} session, return {session_return_fmt} ({session_date})"
-        )
-        if session_fallback:
-            session_note += f" [{session_fallback}]"
-
-        # 9. Overall alignment
-        alignment = _clamp(fv.cross_asset_alignment_score, -1.0, 1.0, 0.0)
-        magnitude = _clamp(fv.cross_asset_magnitude, 0.0, 5.0, 0.0)
-
-        return [
-            FactorContribution(
-                name="US Equity Lead (S&P / Nasdaq / Dow overnight move)",
-                raw_value=us_avg,
-                raw_unit="%",
-                direction=_direction_label(us_avg if us_avg is not None else 0.0),
-                weight=round(self.weights["alignment"], 4),
-                score=round(us_score * self.weights["alignment"], 4),
-                note=us_note,
-            ),
-            FactorContribution(
-                name="SPI 200 Futures bias",
-                raw_value=spi_combined,
-                raw_unit="%",
-                direction=_direction_label(spi_score),
-                weight=round(self.weights["spi_basis"], 4),
-                score=round(spi_score * self.weights["spi_basis"], 4),
-                note=spi_note,
-            ),
-            FactorContribution(
-                name="Iron Ore change",
-                raw_value=fv.iron_ore_change_pct,
-                raw_unit="%",
-                direction=_direction_label(iron),
-                weight=round(self.weights["alignment"] / 3.0, 4),
-                score=round(iron / 2.0 * self.weights["alignment"], 4),
-                note=(
-                    f"Iron ore {_fmt_pct(fv.iron_ore_change_pct)};"
-                    " positive supports materials, negative weighs"
-                ),
-            ),
-            FactorContribution(
-                name="Gold & Silver change",
-                raw_value=pm_avg,
-                raw_unit="%",
-                direction=pm_dir,
-                weight=round(self.weights["alignment"] / 3.0, 4),
-                score=round((pm_avg or 0.0) / 2.0 * self.weights["alignment"], 4),
-                note=pm_note,
-            ),
-            FactorContribution(
-                name="AUD/USD move",
-                raw_value=fv.aud_usd_change_pct,
-                raw_unit="%",
-                direction=_direction_label(aud),
-                weight=round(self.weights["alignment"] / 3.0, 4),
-                score=round(aud / 2.0 * self.weights["alignment"], 4),
-                note=(
-                    f"AUD/USD {_fmt_pct(fv.aud_usd_change_pct)};"
-                    " rising AUD is pro-growth / pro-ASX"
-                ),
-            ),
-            FactorContribution(
-                name="A-VIX / Volatility Regime",
-                raw_value=fv.a_vix,
-                raw_unit="index",
-                direction=vol_dir,
-                weight=round(self.weights["volatility"], 4),
-                score=round(vol_high * self.weights["volatility"], 4),
-                note=vol_note,
-            ),
-            FactorContribution(
-                name="Catalyst Score (economic calendar)",
-                raw_value=cat,
-                raw_unit="0-5",
-                direction="bearish" if cat >= 3 else "neutral",
-                weight=round(self.weights["catalyst"], 4),
-                score=round(cat / 5.0 * self.weights["catalyst"], 4),
-                note=(
-                    f"{int(fv.high_impact_events_next_24h or 0)} high-impact event(s) in next 24h,"
-                    f" {int(fv.high_impact_events_next_48h or 0)} in 48h"
-                ),
-            ),
-            FactorContribution(
-                name="Current-day / last-session ASX character",
-                raw_value=session_ret,
-                raw_unit="%",
-                direction=_direction_label(session_ret),
-                weight=round(self.weights["session"], 4),
-                score=round(sess_high * self.weights["session"], 4),
-                note=session_note,
-            ),
-            FactorContribution(
-                name="Financials vs Materials Relative Strength",
-                raw_value=fv.financials_minus_materials_weighted_pct,
-                raw_unit="%",
-                direction=_direction_label(fv.financials_vs_materials_score or 0.0),
-                weight=round(self.weights["financials_vs_materials"], 4),
-                score=round(fvm_high * self.weights["financials_vs_materials"], 4),
-                note=(
-                    (
-                        f"1d {fv.financials_minus_materials_1d_pct:+.2f}%, "
-                        f"3d {fv.financials_minus_materials_3d_pct:+.2f}%, "
-                        f"5d {fv.financials_minus_materials_5d_pct:+.2f}%"
-                    )
-                    if fv.financials_minus_materials_1d_pct is not None
-                    else "No Financials/Materials data"
-                ),
-            ),
-            FactorContribution(
-                name="Housing & Credit Pulse",
-                raw_value=fv.housing_credit_pulse_score,
-                raw_unit="0-10",
-                direction=_direction_label((fv.housing_credit_pulse_score or 5.0) - 5.0),
-                weight=round(self.weights["housing_credit"], 4),
-                score=round(hc_high * self.weights["housing_credit"], 4),
-                note=(
-                    f"pulse {fv.housing_credit_pulse_score:.1f}/10 via "
-                    f"{', '.join(fv.housing_credit_pulse_sources or ['proxies'])}"
-                    if fv.housing_credit_pulse_score is not None
-                    else "No housing/credit proxy data"
-                ),
-            ),
-            FactorContribution(
-                name="China Steel / Property Pulse",
-                raw_value=fv.china_steel_property_return_pct,
-                raw_unit="%",
-                direction=_direction_label(fv.china_steel_property_score or 0.0),
-                weight=round(self.weights["china_steel_property"], 4),
-                score=round(china_high * self.weights["china_steel_property"], 4),
-                note=(
-                    f"composite {fv.china_steel_property_return_pct:+.2f}% "
-                    f"({', '.join(fv.china_steel_property_sources or ['proxies'])})"
-                    if fv.china_steel_property_return_pct is not None
-                    else "No China steel/proxy data"
-                ),
-            ),
-            FactorContribution(
-                name="Heavyweight Idiosyncratic Score – CBA + BHP",
-                raw_value=fv.heavyweight_idio_return_pct,
-                raw_unit="%",
-                direction=_direction_label(fv.heavyweight_idio_score or 0.0),
-                weight=round(self.weights["heavyweight_idio"], 4),
-                score=round(hw_high * self.weights["heavyweight_idio"], 4),
-                note=(
-                    (
-                        f"CBA/BHP weighted {fv.heavyweight_idio_return_pct:+.2f}%"
-                        + (
-                            f", news boost +{fv.heavyweight_idio_news_boost:.0%}"
-                            if fv.heavyweight_idio_news_boost
-                            else ", no major idiosyncratic news boost"
-                        )
-                    )
-                    if fv.heavyweight_idio_return_pct is not None
-                    else "No CBA/BHP data"
-                ),
-            ),
-            FactorContribution(
-                name="RSI (14) Overbought / Oversold",
-                raw_value=fv.rsi_14,
-                raw_unit="index",
-                direction=_direction_label(fv.rsi_score or 0.0),
-                weight=round(self.weights["rsi"], 4),
-                score=round(rsi_high * self.weights["rsi"], 4),
-                note=(
-                    f"RSI {fv.rsi_14:.1f}"
-                    if fv.rsi_14 is not None
-                    else "No RSI data"
-                ),
-            ),
-            FactorContribution(
-                name="Distance from All-Time / Trailing High",
-                raw_value=fv.ath_distance_pct,
-                raw_unit="%",
-                direction=_direction_label(fv.ath_score or 0.0),
-                weight=round(self.weights["ath_distance"], 4),
-                score=round(ath_high * self.weights["ath_distance"], 4),
-                note=(
-                    f"ATH distance {fv.ath_distance_pct:+.2f}%, "
-                    f"20d high {fv.high_20d_distance_pct:+.2f}%, "
-                    f"50d high {fv.high_50d_distance_pct:+.2f}%"
-                    if fv.ath_distance_pct is not None
-                    else "No price history"
-                ),
-            ),
-            FactorContribution(
-                name="Short-term Momentum Exhaustion",
-                raw_value=fv.index_5d_return_pct,
-                raw_unit="%",
-                direction=_direction_label(fv.momentum_exhaustion_score or 0.0),
-                weight=round(self.weights["momentum_exhaustion"], 4),
-                score=round(mom_high * self.weights["momentum_exhaustion"], 4),
-                note=(
-                    (
-                        f"5d return {fv.index_5d_return_pct:+.2f}%"
-                        + (
-                            " – profit-taking combo triggered"
-                            if fv.profit_taking_combo_score
-                            and fv.profit_taking_combo_score < 0
-                            else ""
-                        )
-                    )
-                    if fv.index_5d_return_pct is not None
-                    else "No 5d return data"
-                ),
-            ),
-            FactorContribution(
-                name="Bollinger Band Position",
-                raw_value=fv.bollinger_position,
-                raw_unit="std",
-                direction=_direction_label(fv.bollinger_score or 0.0),
-                weight=round(self.weights["bollinger"], 4),
-                score=round(boll_high * self.weights["bollinger"], 4),
-                note=(
-                    f"price {fv.bollinger_position:+.2f}σ vs 20-day band"
-                    if fv.bollinger_position is not None
-                    else "No Bollinger data"
-                ),
-            ),
-            FactorContribution(
-                name="Overall Alignment Score",
-                raw_value=fv.cross_asset_alignment_score,
-                raw_unit="score",
-                direction=_direction_label(alignment),
-                weight=round(self.weights["alignment"], 4),
-                score=round(align_high * self.weights["alignment"], 4),
-                note=f"Alignment {alignment:+.2f}, cross-asset magnitude {magnitude:.2f}%",
-            ),
-        ]
-
-
 def bucket_from_return(return_pct: float) -> str:
-    """Map an actual signed return to its bucket label."""
-    if return_pct < 0.0:
-        return BUCKET_LABELS[0]
-    if return_pct < 0.3:
-        return BUCKET_LABELS[1]
-    if return_pct <= 0.5:
-        return BUCKET_LABELS[2]
-    return BUCKET_LABELS[3]
+    """Map an actual signed return to the primary-model bucket label."""
+    if return_pct <= -0.6:
+        return PRIMARY_BUCKETS[0]
+    if return_pct < 0.6:
+        return PRIMARY_BUCKETS[1]
+    return PRIMARY_BUCKETS[2]
