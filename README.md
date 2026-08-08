@@ -6,7 +6,8 @@ A production-quality Python application that produces calibrated probabilities f
 
 Before 2pm AEST on ASX trading days, predict whether the next ASX 200 cash session will move:
 
-- `< 0.3%`
+- `Negative (<0%)`
+- `0% – 0.3%`
 - `0.3% – 0.5%`
 - `> 0.5%`
 
@@ -17,7 +18,7 @@ The app combines a rule-based scoring engine with configurable weights, persiste
 | Component | Purpose |
 |-----------|---------|
 | `src/asx200_mag_predictor/data/fetchers.py` | Robust yfinance fetchers with primary + fallback symbols, JSON snapshot caching |
-| `src/asx200_mag_predictor/scoring/features.py` | Feature engineering: volatility regime, catalyst score, cross-asset alignment, session character, SPI basis |
+| `src/asx200_mag_predictor/scoring/features.py` | Feature engineering: volatility regime, catalyst score, cross-asset alignment, session character, SPI basis, plus Financials vs Materials, housing/credit pulse, China steel/property and CBA+BHP idiosyncratic factors |
 | `src/asx200_mag_predictor/scoring/engine.py` | Rule-based logit-prob engine with configurable weights and confidence |
 | `src/asx200_mag_predictor/storage/` | SQLAlchemy models + repository for predictions, actuals, snapshots |
 | `src/asx200_mag_predictor/api/` | FastAPI backend (status, predict, history, calibration) |
