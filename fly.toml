@@ -1,0 +1,12 @@
+app = "asx200-magnitude-predictor"
+primary_region = "lax"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[env]
+  APP_ENV = "production"
