@@ -68,6 +68,10 @@ class Repository:
             ml_probabilities_json=prediction.ml_probabilities or {},
             ml_feature_importance_json=prediction.ml_feature_importance or [],
             ml_fallback_reason=prediction.ml_fallback_reason,
+            recommendation=prediction.recommendation,
+            recommendation_source=prediction.recommendation_source,
+            recommendation_confidence=prediction.recommendation_confidence,
+            in_position=prediction.in_position,
         )
         self.session.add(record)
         self.session.commit()
@@ -185,4 +189,8 @@ class Repository:
             ml_probabilities=record.ml_probabilities_json or {},
             ml_feature_importance=record.ml_feature_importance_json or [],
             ml_fallback_reason=record.ml_fallback_reason,
+            recommendation=record.recommendation or "STAY IN CASH",
+            recommendation_source=record.recommendation_source or "Primary",
+            recommendation_confidence=record.recommendation_confidence or 0.0,
+            in_position=record.in_position,
         )

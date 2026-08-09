@@ -193,6 +193,12 @@ class Prediction(BaseModel):
     ml_feature_importance: list[dict[str, Any]] = Field(default_factory=list)
     ml_fallback_reason: str | None = None
 
+    # Long-only directional recommendation
+    recommendation: str = "STAY IN CASH"  # GO LONG | STAY IN CASH | HOLD EXISTING
+    recommendation_source: str = "Primary"  # Primary | Secondary
+    recommendation_confidence: float = 0.0  # 0-1 confidence in the recommendation
+    in_position: bool | None = None
+
 
 class Actual(BaseModel):
     """Outcome used for calibration."""

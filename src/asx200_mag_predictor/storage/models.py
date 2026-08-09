@@ -45,6 +45,10 @@ class PredictionRecord(Base):
     ml_probabilities_json: Mapped[dict] = mapped_column(JSON, default=dict)
     ml_feature_importance_json: Mapped[list] = mapped_column(JSON, default=list)
     ml_fallback_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    recommendation: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    recommendation_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    recommendation_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    in_position: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     actual: Mapped["ActualRecord"] = relationship(back_populates="prediction", uselist=False)
 
@@ -110,6 +114,10 @@ def _add_missing_columns(engine) -> None:
             ("ml_probabilities_json", "JSON"),
             ("ml_feature_importance_json", "JSON"),
             ("ml_fallback_reason", "VARCHAR"),
+            ("recommendation", "VARCHAR"),
+            ("recommendation_source", "VARCHAR"),
+            ("recommendation_confidence", "FLOAT"),
+            ("in_position", "BOOLEAN"),
         ],
         "actuals": [
             ("actual_return_pct", "FLOAT"),

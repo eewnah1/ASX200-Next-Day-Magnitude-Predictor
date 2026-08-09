@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query
+from pydantic import BaseModel
 
 from asx200_mag_predictor.config import get_settings
 from asx200_mag_predictor.data.fetchers import DataFetcher
@@ -16,6 +17,11 @@ from asx200_mag_predictor.timezone import now_sydney
 
 logger = get_logger(__name__)
 router = APIRouter()
+
+
+class PredictRequest(BaseModel):
+    in_position: bool = False
+    notes: str = ""
 
 
 def _repo() -> Repository:
@@ -48,8 +54,9 @@ async def status() -> dict[str, Any]:
 
 
 @router.post("/predict", response_model=dict[str, Any])
-async def predict_manual(notes: str = "") -> dict[str, Any]:
+async def predict_manual(body: PredictRequest = Body(default=None)) -> dict[str, Any]:
     """Trigger a fresh prediction from live data and store it."""
+    body = body or PredictRequest()
     fetcher = _fetcher()
     raw: RawMarketData | None = None
     fetch_errors: list[str] = []
@@ -65,9 +72,9 @@ async def predict_manual(notes: str = "") -> dict[str, Any]:
 
     try:
         features, flags = build_features(raw)
-        prediction = _engine().predict(features, flags)
-        if notes:
-            prediction.notes.append(notes)
+        prediction = _engine().predict(features, flags, in_position=body.in_position)
+        if body.notes:
+            prediction.notes.append(body.notes)
         if fetch_errors:
             prediction.errors.extend(fetch_errors)
             prediction.degraded = True
@@ -75,7 +82,7 @@ async def predict_manual(notes: str = "") -> dict[str, Any]:
         repo = _repo()
         prediction_id = repo.save_prediction(prediction)
         return {"prediction_id": prediction_id, "prediction": prediction.model_dump(mode="json")}
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: B008, BLE001
         logger.exception("Prediction failed")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -156,4 +163,4 @@ async def train_ml() -> dict[str, Any]:
 @router.post("/run-daily")
 async def run_daily() -> dict[str, Any]:
     """Manual trigger of the daily job."""
-    return await predict_manual(notes="daily-run")
+    return await predict_manual(PredictRequest(notes="daily-run"))

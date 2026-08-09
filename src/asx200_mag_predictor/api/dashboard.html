@@ -36,14 +36,30 @@
     .tag-bullish { background: #14532d; color: #86efac; }
     .tag-bearish { background: #450a0a; color: #fecaca; }
     .tag-neutral { background: #334155; color: #cbd5e1; }
+    .recommendation-banner { border-radius: 12px; padding: 24px; margin-bottom: 24px; text-align: center; }
+    .rec-go-long { background: #14532d; color: #86efac; }
+    .rec-stay-cash { background: #450a0a; color: #fecaca; }
+    .rec-hold-existing { background: #451a03; color: #fed7aa; }
+    .rec-title { font-size: 2.8rem; font-weight: 800; margin: 0 0 8px; }
+    .rec-sub { font-size: 1rem; opacity: 0.9; }
+    .side-by-side { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px; }
   </style>
 </head>
 <body>
   <h1>ASX200 Next-Day Magnitude Predictor</h1>
-  <div class="subtitle">Predicts the next ASX 200 trading day's signed return bucket using the latest available market data.</div>
+  <div class="subtitle">Long-only directional filter. Use before 2:00 PM AEST for the next ASX 200 session.</div>
 
-  <div style="margin-bottom:24px;">
+  <div id="recommendationBanner" class="recommendation-banner rec-stay-cash" style="display:none;">
+    <div class="rec-title" id="recommendationText">-</div>
+    <div class="rec-sub" id="recommendationSub">-</div>
+  </div>
+
+  <div style="margin-bottom:24px; display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
     <button id="runBtn" onclick="runPrediction()">Run prediction now</button>
+    <label style="display:flex; align-items:center; gap:8px; cursor:pointer; color:var(--muted);">
+      <input type="checkbox" id="inPosition" />
+      Already holding ASX 200 (negative → HOLD EXISTING)
+    </label>
     <div class="status" id="status"></div>
   </div>
 
@@ -51,17 +67,31 @@
 
   <div class="grid" id="probs"></div>
 
-  <div class="card" style="margin-bottom:24px;">
-    <h2>Active model</h2>
-    <div id="model" class="big">-</div>
-    <div id="primaryBucket" style="color:var(--muted);margin-top:8px;">Primary bucket: -</div>
-    <div id="secondaryBucket" style="color:var(--muted);display:none;">Secondary bucket: -</div>
-    <div id="ruleScore" style="color:var(--muted);margin-top:4px;">Rule score: -</div>
-    <div id="confidence" style="color:var(--muted);margin-top:4px;">Confidence: -</div>
-    <div id="mlAgreement" style="color:var(--muted);font-size:0.9rem;margin-top:4px;">Rule / ML agreement: -</div>
-    <div id="generated" style="color:var(--muted);font-size:0.9rem;margin-top:8px;">Generated: -</div>
-    <div id="dataAsOf" style="color:var(--muted);font-size:0.9rem;margin-top:4px;">Data as of: -</div>
+  <div class="side-by-side">
+    <div class="card">
+      <h2>Active model</h2>
+      <div id="model" class="big">-</div>
+      <div id="primaryBucket" style="color:var(--muted);margin-top:8px;">Primary bucket: -</div>
+      <div id="secondaryBucket" style="color:var(--muted);display:none;">Secondary bucket: -</div>
+    </div>
+    <div class="card">
+      <h2>Rule score</h2>
+      <div id="ruleScore" class="big" style="color:var(--muted);">-</div>
+      <div style="color:var(--muted);font-size:0.9rem;margin-top:8px;">Primary score (weighted factor sum)</div>
+    </div>
+    <div class="card">
+      <h2>ML probability — Positive / Large Up</h2>
+      <div id="mlPositiveProb" class="big" style="color:var(--low);">-</div>
+      <div id="mlPositiveLabel" style="color:var(--muted);font-size:0.9rem;margin-top:8px;">Primary ML Large Up probability</div>
+    </div>
+    <div class="card">
+      <h2>Confidence</h2>
+      <div id="confidence" class="big" style="color:var(--muted);">-</div>
+      <div id="mlAgreement" style="color:var(--muted);font-size:0.9rem;margin-top:8px;">Rule / ML agreement: -</div>
+    </div>
   </div>
+  <div id="generated" style="color:var(--muted);font-size:0.9rem;margin-bottom:8px;">Generated: -</div>
+  <div id="dataAsOf" style="color:var(--muted);font-size:0.9rem;margin-bottom:24px;">Data as of: -</div>
 
   <div id="mlFallback" class="degraded-banner" style="display:none;background:#451a03;color:#fed7aa;border-color:#f97316;">ML models not available – using rule-based scoring only.</div>
 
@@ -160,6 +190,32 @@
       return `<div class="card"><h2>${label}</h2><div class="big" style="color:${mlColor(label)}">${(prob*100).toFixed(1)}%</div><div class="bar"><div class="bar-fill" style="width:${prob*100}%;background:${mlColor(label)}"></div></div></div>`;
     }
 
+    function getInPosition() {
+      return $('inPosition').checked;
+    }
+
+    function displayRecommendation(p) {
+      const inPos = getInPosition();
+      const banner = $('recommendationBanner');
+      const text = $('recommendationText');
+      const sub = $('recommendationSub');
+      let rec = p.recommendation || 'STAY IN CASH';
+      if (inPos && rec === 'STAY IN CASH') {
+        rec = 'HOLD EXISTING';
+      }
+      text.textContent = rec;
+      banner.style.display = 'block';
+      banner.className = 'recommendation-banner ' + (
+        rec === 'GO LONG' ? 'rec-go-long' : rec === 'HOLD EXISTING' ? 'rec-hold-existing' : 'rec-stay-cash'
+      );
+      const source = p.recommendation_source || p.model || 'Primary';
+      const conf = (p.confidence || 0) * 100;
+      sub.innerHTML = `Source: <strong>${source}</strong> &middot; Confidence: <strong>${conf.toFixed(1)}%</strong>`;
+      if (p.degraded) {
+        sub.innerHTML += ' <br><span style="opacity:.8;">Data degraded – using latest available data</span>';
+      }
+    }
+
     function renderMl(p) {
       const fb = $('mlFallback');
       if (!p.ml_available) {
@@ -204,10 +260,17 @@
         }
       }
       $('mlAgreement').textContent = 'Rule / ML agreement: ' + agreement;
+
+      const largeUp = primary['Large Up'] || 0;
+      const largeDown = primary['Large Down'] || 0;
+      $('mlPositiveProb').textContent = (largeUp * 100).toFixed(1) + '%';
+      $('mlPositiveLabel').textContent = `Large Up ML probability (Negative / Large Down: ${(largeDown * 100).toFixed(1)}%)`;
+      $('mlPositiveProb').style.color = largeUp >= 0.60 ? 'var(--low)' : 'var(--muted)';
     }
 
     function renderPrediction(data) {
       const p = data.prediction || data;
+      window._lastPrediction = p;
       const probs = p.probabilities;
       $('probs').innerHTML = `
         <div class="card"><h2>Negative (&lt;0%)</h2><div class="big" style="color:var(--negative)">${(probs.negative*100).toFixed(1)}%</div><div class="bar"><div class="bar-fill" style="width:${probs.negative*100}%;background:var(--negative)"></div></div></div>
@@ -216,6 +279,7 @@
         <div class="card"><h2>High (&gt;0.5%)</h2><div class="big" style="color:var(--high)">${(probs.high*100).toFixed(1)}%</div><div class="bar"><div class="bar-fill" style="width:${probs.high*100}%;background:var(--high)"></div></div></div>
       `;
       renderMl(p);
+      displayRecommendation(p);
       $('model').textContent = p.model || 'Primary';
       $('primaryBucket').textContent = `Primary bucket: ${p.primary_bucket || p.bucket || '-'} (score ${(p.primary_score || 0).toFixed(2)})`;
       const secEl = $('secondaryBucket');
@@ -225,8 +289,9 @@
       } else {
         secEl.style.display = 'none';
       }
-      $('ruleScore').textContent = `Rule score: primary ${(p.primary_score || 0).toFixed(2)}, secondary ${(p.secondary_score || 0).toFixed(2)}`;
-      $('confidence').textContent = `Confidence: ${(p.confidence*100).toFixed(1)}%`;
+      $('ruleScore').textContent = (p.primary_score || 0).toFixed(2);
+      $('ruleScore').style.color = (p.primary_score || 0) > 0 ? 'var(--low)' : (p.primary_score || 0) < 0 ? 'var(--negative)' : 'var(--muted)';
+      $('confidence').textContent = `${(p.confidence*100).toFixed(1)}%`;
       $('generated').textContent = `Generated: ${fmtAest(p.generated_at)}`;
       $('dataAsOf').textContent = `Data as of: ${fmtAest(p.data_as_of || p.features.fetched_at)} (latest available)`;
 
@@ -336,7 +401,7 @@
       $('status').textContent = 'Fetching market data and scoring (can take ~45s on weekends)...';
       $('status').className = 'status';
       try {
-        const data = await api('/predict', 'POST');
+        const data = await api('/predict', 'POST', { in_position: getInPosition() });
         renderPrediction(data);
         $('status').textContent = `Prediction saved: ${data.prediction_id}`;
         loadCalibration();
@@ -348,6 +413,11 @@
         btn.disabled = false;
       }
     }
+
+    $('inPosition').addEventListener('change', () => {
+      const p = window._lastPrediction;
+      if (p) displayRecommendation(p);
+    });
 
     (async () => {
       await Promise.all([loadLatest(), loadCalibration(), loadCalendar()]);

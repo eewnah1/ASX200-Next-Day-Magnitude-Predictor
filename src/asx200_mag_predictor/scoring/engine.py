@@ -151,6 +151,7 @@ class ScoringEngine:
         features: FeatureVector | dict[str, Any],
         data_quality_flags: DataQualityFlags | None = None,
         prediction_for: Any | None = None,
+        in_position: bool = False,
     ) -> Prediction:
         """Return a two-model prediction for the supplied feature set."""
         fv = self._coerce(features)
@@ -189,14 +190,15 @@ class ScoringEngine:
         # The primary bucket is used as the headline bucket.
         # The UI will display the secondary bucket when Model 2 is active.
         model = self._active_model_name(primary_bucket, secondary_bucket)
-        confidence = self._hybrid_confidence(
-            primary_bucket,
-            primary_score,
-            ml_primary_probs,
-            secondary_bucket,
-            secondary_score,
-            ml_secondary_probs,
-            fv,
+        recommendation, recommendation_source, confidence = self._build_recommendation(
+            primary_bucket=primary_bucket,
+            primary_score=primary_score,
+            ml_primary_probs=ml_primary_probs,
+            secondary_bucket=secondary_bucket,
+            secondary_score=secondary_score,
+            ml_secondary_probs=ml_secondary_probs,
+            fv=fv,
+            in_position=in_position,
         )
         degraded, degraded_sources = self._degraded_status(fv, flags)
 
@@ -237,6 +239,14 @@ class ScoringEngine:
             notes.append(f"ML fallback: {fallback_reason}; using rule-based output.")
         if degraded:
             notes.append(f"Degraded prediction – missing: {', '.join(degraded_sources)}.")
+        notes.append(
+            f"Long-only recommendation: {recommendation} "
+            f"(source: {recommendation_source}, confidence: {confidence:.1%})"
+        )
+        if in_position and recommendation == "STAY IN CASH":
+            notes.append(
+                "Already in position – negative signal converted to HOLD EXISTING (no exit)."
+            )
 
         return Prediction(
             prediction_for_date=prediction_for_date,
@@ -270,6 +280,10 @@ class ScoringEngine:
             },
             ml_feature_importance=self.hybrid_ml.feature_importance(top=10),
             ml_fallback_reason=fallback_reason,
+            recommendation=recommendation,
+            recommendation_source=recommendation_source,
+            recommendation_confidence=round(confidence, 4),
+            in_position=in_position,
         )
 
     # ------------------------------------------------------------------ helpers
@@ -989,6 +1003,100 @@ class ScoringEngine:
         )
         penalty = min(flag_count * 0.05, 0.25)
         return max(0.2, min(1.0, base_conf - penalty))
+
+    def _build_recommendation(
+        self,
+        primary_bucket: str,
+        primary_score: float,
+        ml_primary_probs: dict[str, float] | None,
+        secondary_bucket: str | None,
+        secondary_score: float,
+        ml_secondary_probs: dict[str, float] | None,
+        fv: FeatureVector,
+        in_position: bool,
+    ) -> tuple[str, str, float]:
+        """Produce the final long-only recommendation and its confidence."""
+        rsi = _clamp(fv.rsi_14, 0.0, 100.0, 50.0)
+        ath = _clamp(fv.ath_distance_pct, -50.0, 50.0, -5.0)
+        iron = fv.iron_ore_change_pct
+        fvm = _clamp(fv.financials_vs_materials_score, -2.0, 2.0, 0.0)
+
+        # Strong bearish technical signature blocks new longs.
+        technicals_bearish = (rsi >= 70) or (rsi >= 65 and ath >= -0.5)
+
+        # Strong downside confirmation (used for STAY IN CASH).
+        strong_downside = (
+            rsi >= 70
+            and ath >= -1.0
+            and ((iron is not None and iron <= -0.6) or fvm <= -0.5)
+        )
+
+        p_up = ml_primary_probs.get("Large Up", 0.0) if ml_primary_probs else 0.0
+        p_down = ml_primary_probs.get("Large Down", 0.0) if ml_primary_probs else 0.0
+        p_mild_bull = (
+            ml_secondary_probs.get("Mild Bullish Bias", 0.0) if ml_secondary_probs else 0.0
+        )
+        p_mild_bear = (
+            ml_secondary_probs.get("Mild Bearish Bias", 0.0) if ml_secondary_probs else 0.0
+        )
+
+        # Confidence penalty for stale/failed data sources.
+        _, degraded_sources = self._degraded_status(fv, DataQualityFlags())
+        data_penalty = min(len(degraded_sources) * 0.05, 0.25)
+
+        # 1. Primary GO LONG.
+        primary_go_long = (
+            primary_score >= 1.0
+            and p_up >= 0.60
+            and not technicals_bearish
+        ) or (
+            primary_score >= 2.0
+            and not technicals_bearish
+            and ml_primary_probs is None
+        )
+        if primary_go_long:
+            if ml_primary_probs is not None:
+                conf = 0.55 + 0.45 * p_up + 0.10 * min(primary_score / 3.0, 1.0)
+            else:
+                conf = 0.55 + 0.25 * min(primary_score / 3.0, 1.0)
+            conf = max(0.35, min(1.0, conf - data_penalty))
+            return "GO LONG", "Primary", conf
+
+        # 2. Primary/Secondary STAY IN CASH triggers.
+        cash_triggered = (
+            primary_score <= -1.0
+            or p_down >= 0.55
+            or strong_downside
+            or (secondary_bucket == "Mild Bearish Bias" and p_mild_bear >= 0.55)
+        )
+
+        # 3. Secondary GO LONG (only when primary is unclear / not already cash).
+        secondary_go_long = (
+            not cash_triggered
+            and primary_bucket == "Neutral"
+            and secondary_bucket == "Mild Bullish Bias"
+            and secondary_score >= 0.4
+            and p_mild_bull >= 0.60
+            and not technicals_bearish
+        )
+        if secondary_go_long:
+            conf = 0.50 + 0.40 * p_mild_bull + 0.10 * min(secondary_score, 1.0)
+            conf = max(0.35, min(1.0, conf - data_penalty))
+            return "GO LONG", "Secondary", conf
+
+        # 4. Default: STAY IN CASH (or HOLD EXISTING if already in a position).
+        if cash_triggered:
+            source = "Secondary" if secondary_bucket == "Mild Bearish Bias" else "Primary"
+            conf = 0.50 + 0.40 * max(p_down, p_mild_bear) + 0.20 * min(
+                abs(primary_score) / 3.0, 1.0
+            )
+        else:
+            source = "Primary"
+            conf = 0.50 + 0.20 * max(p_up, p_mild_bull)
+
+        conf = max(0.3, min(0.85, conf - data_penalty))
+        recommendation = "HOLD EXISTING" if in_position else "STAY IN CASH"
+        return recommendation, source, conf
 
     def _coerce(self, features: FeatureVector | dict[str, Any]) -> FeatureVector:
         if isinstance(features, FeatureVector):

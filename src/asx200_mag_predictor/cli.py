@@ -31,11 +31,11 @@ def cmd_predict(args: argparse.Namespace) -> None:
             spi_basis_pct=args.spi_basis,
             spi_momentum_pct=args.spi_momentum,
         )
-        prediction = ScoringEngine(settings).predict(features)
+        prediction = ScoringEngine(settings).predict(features, in_position=args.in_position)
     else:
         raw = DataFetcher(settings).fetch_all()
         features, flags = build_features(raw)
-        prediction = ScoringEngine(settings).predict(features, flags)
+        prediction = ScoringEngine(settings).predict(features, flags, in_position=args.in_position)
 
     print(prediction.model_dump_json(indent=2))
 
@@ -70,6 +70,11 @@ def main() -> None:
 
     p_predict = sub.add_parser("predict", help="Run a prediction")
     p_predict.add_argument("--mock", action="store_true", help="Use mock feature inputs")
+    p_predict.add_argument(
+        "--in-position",
+        action="store_true",
+        help="Already holding ASX 200 (negative signals become HOLD EXISTING)",
+    )
     p_predict.add_argument("--a-vix", type=float, default=18.0)
     p_predict.add_argument("--realized-vol", type=float, default=17.0)
     p_predict.add_argument("--catalyst", type=int, default=2)
