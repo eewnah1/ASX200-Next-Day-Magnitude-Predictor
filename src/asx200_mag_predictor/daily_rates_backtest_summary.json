@@ -1,0 +1,67 @@
+{
+  "total_days": 4582,
+  "high_conviction_signals": 31,
+  "signal_coverage": 0.0068,
+  "directional_accuracy": 0.9677,
+  "bucket_accuracy": 0.8387,
+  "by_bucket": {
+    "Large Up": {
+      "signals": 19,
+      "directional_accuracy": 0.9474,
+      "bucket_accuracy": 0.7368,
+      "mean_return_pct": 1.098
+    },
+    "Large Down": {
+      "signals": 12,
+      "directional_accuracy": 1.0,
+      "bucket_accuracy": 1.0,
+      "mean_return_pct": -2.1352
+    }
+  },
+  "rules": [
+    {
+      "bucket": "Large Up",
+      "conditions": [
+        [
+          "international_shares",
+          ">",
+          2.0
+        ],
+        [
+          "high_growth",
+          ">",
+          -0.5
+        ],
+        [
+          "balanced",
+          "<",
+          1.0
+        ]
+      ],
+      "signals": 19,
+      "directional_accuracy": 0.9474
+    },
+    {
+      "bucket": "Large Down",
+      "conditions": [
+        [
+          "international_shares",
+          "<",
+          -1.5
+        ],
+        [
+          "high_growth",
+          "<",
+          -1.0
+        ],
+        [
+          "balanced",
+          ">",
+          -1.0
+        ]
+      ],
+      "signals": 12,
+      "directional_accuracy": 1.0
+    }
+  ]
+}

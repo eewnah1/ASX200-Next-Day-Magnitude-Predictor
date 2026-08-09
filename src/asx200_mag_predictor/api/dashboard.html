@@ -124,6 +124,10 @@
       <h2>Calendar proxy</h2>
       <pre id="calendar">No calendar data.</pre>
     </div>
+    <div class="card" style="grid-column: 1 / -1;">
+      <h2>Daily-rates high-conviction backtest</h2>
+      <div id="backtestSummary">Loading backtest summary...</div>
+    </div>
   </div>
 
   <details id="errorsPanel" style="display:none;">
@@ -395,6 +399,38 @@
       }
     }
 
+    async function loadBacktestSummary() {
+      try {
+        const s = await api('/backtest/summary');
+        if (s.error) {
+          $('backtestSummary').textContent = s.error;
+          return;
+        }
+        let html = `<div style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:12px;">
+          <div class="card" style="flex:1;min-width:140px;"><h2>Trading days</h2><div class="big">${s.total_days}</div></div>
+          <div class="card" style="flex:1;min-width:140px;"><h2>HC signals</h2><div class="big">${s.high_conviction_signals}</div><div style="color:var(--muted);font-size:0.85rem;">${(s.signal_coverage * 100).toFixed(2)}% coverage</div></div>
+          <div class="card" style="flex:1;min-width:140px;"><h2>Directional accuracy</h2><div class="big" style="color:var(--low);">${(s.directional_accuracy * 100).toFixed(1)}%</div></div>
+          <div class="card" style="flex:1;min-width:140px;"><h2>Bucket accuracy</h2><div class="big" style="color:var(--mid);">${(s.bucket_accuracy * 100).toFixed(1)}%</div></div>
+        </div>`;
+        html += '<table><thead><tr><th>Bucket</th><th>Signals</th><th>Direction accuracy</th><th>Bucket accuracy</th><th>Mean return</th></tr></thead><tbody>';
+        for (const [bucket, stats] of Object.entries(s.by_bucket || {})) {
+          html += `<tr><td><strong>${bucket}</strong></td><td>${stats.signals}</td><td>${(stats.directional_accuracy * 100).toFixed(1)}%</td><td>${(stats.bucket_accuracy * 100).toFixed(1)}%</td><td>${stats.mean_return_pct >= 0 ? '+' : ''}${stats.mean_return_pct.toFixed(3)}%</td></tr>`;
+        }
+        html += '</tbody></table>';
+        if (s.rules && s.rules.length) {
+          html += '<h3 style="margin-top:16px;color:var(--muted);">Active rules</h3><ul style="margin:8px 0;padding-left:20px;color:var(--muted);font-size:0.9rem;">';
+          for (const r of s.rules) {
+            const conds = r.conditions.map(c => `${c[0].replace(/_/g, ' ')} ${c[1]} ${c[2]}%`).join(' <strong>AND</strong> ');
+            html += `<li><span class="tag ${r.bucket === 'Large Up' ? 'tag-bullish' : 'tag-bearish'}">${r.bucket}</span> ${conds} → ${(r.directional_accuracy * 100).toFixed(1)}% (${r.signals} signals)</li>`;
+          }
+          html += '</ul>';
+        }
+        $('backtestSummary').innerHTML = html;
+      } catch (e) {
+        $('backtestSummary').textContent = 'Backtest summary unavailable.';
+      }
+    }
+
     async function runPrediction() {
       const btn = $('runBtn');
       btn.disabled = true;
@@ -420,7 +456,7 @@
     });
 
     (async () => {
-      await Promise.all([loadLatest(), loadCalibration(), loadCalendar()]);
+      await Promise.all([loadLatest(), loadCalibration(), loadCalendar(), loadBacktestSummary()]);
     })();
   </script>
 </body>

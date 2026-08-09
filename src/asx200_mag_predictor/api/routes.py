@@ -146,6 +146,18 @@ async def calendar() -> dict[str, Any]:
     }
 
 
+@router.get("/backtest/summary")
+async def backtest_summary() -> dict[str, Any]:
+    """Return the daily-rates high-conviction backtest summary."""
+    import json
+    from pathlib import Path
+
+    summary_path = Path(__file__).parent.parent / "daily_rates_backtest_summary.json"
+    if summary_path.exists():
+        return json.loads(summary_path.read_text())
+    return {"error": "Backtest summary not available"}
+
+
 @router.post("/train-ml")
 async def train_ml() -> dict[str, Any]:
     """Train the hybrid ML models on historical data."""

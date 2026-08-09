@@ -121,6 +121,9 @@ class FeatureVector(BaseModel):
     bollinger_score: float | None = None
     profit_taking_combo_score: float | None = None
 
+    # Daily rates overlay (historical Australian Shares / International Shares, etc.)
+    daily_rates: dict[str, float] | None = None
+
     # Metadata
     fetched_at: datetime = Field(default_factory=now_sydney)
     data_as_of: datetime | None = None  # timestamp of the latest available market data
@@ -198,6 +201,12 @@ class Prediction(BaseModel):
     recommendation_source: str = "Primary"  # Primary | Secondary
     recommendation_confidence: float = 0.0  # 0-1 confidence in the recommendation
     in_position: bool | None = None
+
+    # Empirical daily-rates high-conviction overlay (backtest >90% targets)
+    high_conviction: bool = False
+    high_conviction_bucket: str | None = None
+    high_conviction_historical_accuracy: float | None = None
+    high_conviction_reason: str | None = None
 
 
 class Actual(BaseModel):

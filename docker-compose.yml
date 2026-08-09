@@ -5,7 +5,7 @@ services:
       dockerfile: docker/Dockerfile.api
     container_name: asx200-api
     ports:
-      - "8000:8000"
+      - "8002:8000"
     env_file:
       - .env
     environment:

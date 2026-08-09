@@ -30,6 +30,7 @@ from asx200_mag_predictor.models import (
     FeatureVector,
     Prediction,
 )
+from asx200_mag_predictor.scoring.daily_rates_overlay import evaluate_high_conviction
 from asx200_mag_predictor.scoring.features import (
     score_china_steel_property,
     score_financials_vs_materials,
@@ -168,6 +169,44 @@ class ScoringEngine:
             primary_score, ml_primary_probs, fv, primary_bucket_rule
         )
 
+        # Daily-rates empirical high-conviction overlay.
+        hc_signal = evaluate_high_conviction(fv)
+        hc_kwargs: dict[str, Any] = {
+            "high_conviction": False,
+            "high_conviction_bucket": None,
+            "high_conviction_historical_accuracy": None,
+            "high_conviction_reason": None,
+        }
+        if hc_signal is not None:
+            primary_bucket = hc_signal.bucket
+            primary_score = 3.5 if hc_signal.bucket == "Large Up" else -3.5
+            ml_primary_probs = {
+                "Large Up": 0.95 if hc_signal.bucket == "Large Up" else 0.0,
+                "Neutral": 0.05,
+                "Large Down": 0.95 if hc_signal.bucket == "Large Down" else 0.0,
+            }
+            primary_contributions.append(
+                FactorContribution(
+                    name="Daily Rates Overlay",
+                    raw_value=None,
+                    raw_unit="",
+                    direction="bullish" if hc_signal.bucket == "Large Up" else "bearish",
+                    weight=1.0,
+                    score=primary_score,
+                    note=hc_signal.reason,
+                    group="Overlay",
+                )
+            )
+            notes_for_hc = f"High-conviction daily-rates overlay: {hc_signal.reason}"
+            hc_kwargs = {
+                "high_conviction": True,
+                "high_conviction_bucket": hc_signal.bucket,
+                "high_conviction_historical_accuracy": hc_signal.historical_accuracy,
+                "high_conviction_reason": hc_signal.reason,
+            }
+        else:
+            notes_for_hc = ""
+
         # Model 2: secondary neutral-zone bias extractor (only if primary is Neutral).
         secondary_contributions: list[FactorContribution] = []
         secondary_score = 0.0
@@ -208,6 +247,8 @@ class ScoringEngine:
             )
 
         notes: list[str] = []
+        if notes_for_hc:
+            notes.append(notes_for_hc)
         notes.append(f"Active model: {model}; primary bucket: {primary_bucket}")
         if ml_available and ml_primary_probs:
             notes.append(
@@ -282,6 +323,7 @@ class ScoringEngine:
             recommendation_source=recommendation_source,
             recommendation_confidence=round(confidence, 4),
             in_position=in_position,
+            **hc_kwargs,
         )
 
     # ------------------------------------------------------------------ helpers
@@ -994,8 +1036,14 @@ class ScoringEngine:
         data_penalty = min(len(degraded_sources) * 0.05, 0.25)
 
         # 1. Primary GO LONG.
-        primary_go_long = (primary_score >= 1.0 and p_up >= 0.60 and not technicals_bearish) or (
-            primary_score >= 2.0 and not technicals_bearish and ml_primary_probs is None
+        # Allow daily-rates high-conviction overlay (score >= 3.5) to bypass RSI gating.
+        overlay_override = primary_score >= 3.5
+        primary_go_long = (
+            primary_score >= 1.0 and p_up >= 0.60
+            and (not technicals_bearish or overlay_override)
+        ) or (
+            primary_score >= 2.0 and (not technicals_bearish or overlay_override)
+            and ml_primary_probs is None
         )
         if primary_go_long:
             if ml_primary_probs is not None:
