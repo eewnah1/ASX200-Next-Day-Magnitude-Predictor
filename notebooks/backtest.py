@@ -174,9 +174,7 @@ def run_backtest(months: int = 12, dry_run: bool = False) -> None:
         atr_window_start = current_date - timedelta(days=15)
         atr_window = axjo.loc[atr_window_start:atr_window_end]
         if len(atr_window) > 1 and axjo_price:
-            atr = (
-                _to_float(atr_window.max()) - _to_float(atr_window.min())
-            ) / axjo_price * 100
+            atr = (_to_float(atr_window.max()) - _to_float(atr_window.min())) / axjo_price * 100
         else:
             atr = None
         session_char = classify_session(

@@ -132,9 +132,7 @@ class MLFeatureMapper:
     ):
         self.base_features = list(base_features or ML_BASE_FEATURES)
         self.interactions = list(interactions or ML_INTERACTIONS)
-        self.feature_names_ = self.base_features + [
-            f"{a}_x_{b}" for a, b in self.interactions
-        ]
+        self.feature_names_ = self.base_features + [f"{a}_x_{b}" for a, b in self.interactions]
         self.fill_: dict[str, float] = {}
         self.fitted = False
 
@@ -245,9 +243,7 @@ class MLModel:
         try:
             from sklearn.ensemble import HistGradientBoostingClassifier
 
-            return HistGradientBoostingClassifier(
-                max_iter=200, learning_rate=0.05, max_depth=4
-            )
+            return HistGradientBoostingClassifier(max_iter=200, learning_rate=0.05, max_depth=4)
         except Exception:
             pass
         from sklearn.linear_model import LogisticRegression
@@ -286,9 +282,7 @@ class MLModel:
             # Fallback: absolute Pearson correlation with the encoded target.
             try:
                 with np.errstate(divide="ignore", invalid="ignore"):
-                    corr = np.abs(
-                        np.corrcoef(self._train_x.T, self._train_y)[:-1, -1]
-                    )
+                    corr = np.abs(np.corrcoef(self._train_x.T, self._train_y)[:-1, -1])
                 corr = np.nan_to_num(corr, nan=0.0)
                 arr = corr
             except Exception:
@@ -324,9 +318,7 @@ class MLModel:
             logger.debug("ML CV failed: %s", exc)
             return {"walk_forward_accuracy": None, "folds": 0}
 
-    def predict_proba(
-        self, x: np.ndarray
-    ) -> dict[str, float] | list[dict[str, float]] | None:
+    def predict_proba(self, x: np.ndarray) -> dict[str, float] | list[dict[str, float]] | None:
         if self.model is None:
             return None
         try:
@@ -407,9 +399,7 @@ class HistoricalFeatureBuilder:
         except Exception:
             return None
 
-    def _n_day_return(
-        self, series: pd.Series, t: datetime, n: int
-    ) -> float | None:
+    def _n_day_return(self, series: pd.Series, t: datetime, n: int) -> float | None:
         if series.empty:
             return None
         cur = self._asof(series, t)
@@ -430,9 +420,7 @@ class HistoricalFeatureBuilder:
                 return chg, ticker
         return None, None
 
-    def _basket_avg_change(
-        self, tickers: list[str], t: datetime, n: int
-    ) -> float | None:
+    def _basket_avg_change(self, tickers: list[str], t: datetime, n: int) -> float | None:
         values = []
         for ticker in tickers:
             chg = self._n_day_return(self._close_series(ticker), t, n)
@@ -571,9 +559,7 @@ class HistoricalFeatureBuilder:
         weighted = None
         if all(diffs[f"diff_{d}d_pct"] is not None for d in (1, 3, 5)):
             weighted = (
-                0.5 * diffs["diff_1d_pct"]
-                + 0.3 * diffs["diff_3d_pct"]
-                + 0.2 * diffs["diff_5d_pct"]
+                0.5 * diffs["diff_1d_pct"] + 0.3 * diffs["diff_3d_pct"] + 0.2 * diffs["diff_5d_pct"]
             )
         financials_vs_materials = {**diffs, "weighted_diff_pct": weighted}
 
@@ -628,9 +614,7 @@ class HistoricalFeatureBuilder:
             close_p = float(row["Close"])
             vol = float(row["Volume"]) if "Volume" in row else None
             atr_5d = self._atr_5d(df_asx, t)
-            session_ret = (
-                (close_p - open_p) / open_p * 100.0 if open_p != 0 else None
-            )
+            session_ret = (close_p - open_p) / open_p * 100.0 if open_p != 0 else None
             vol_ratio = None
             if vol is not None:
                 avg_vol_series = df_asx["Volume"].shift(1).rolling(20).mean()
@@ -688,9 +672,7 @@ class HistoricalFeatureBuilder:
             errors=[],
         )
 
-    def _fv_to_row(
-        self, fv: FeatureVector, t: datetime, next_return: float
-    ) -> dict[str, Any]:
+    def _fv_to_row(self, fv: FeatureVector, t: datetime, next_return: float) -> dict[str, Any]:
         d = fv.model_dump()
         row: dict[str, Any] = {k: d.get(k) for k in ML_BASE_FEATURES}
         row["date"] = t
@@ -758,9 +740,7 @@ class MLTrainer:
         self.model_dir = Path(model_dir) if model_dir else self.settings.ml_model_dir
         self.model_dir.mkdir(parents=True, exist_ok=True)
 
-    def train(
-        self, period: str = "2y", min_history: int = 60
-    ) -> dict[str, Any]:
+    def train(self, period: str = "2y", min_history: int = 60) -> dict[str, Any]:
         logger.info("Building historical feature dataset for ML training...")
         builder = HistoricalFeatureBuilder(
             period=period, min_history=min_history, settings=self.settings

@@ -134,6 +134,27 @@ See `.env.example` for the full list.
 | Calendar | NewsAPI | MarketAux |
 | Intraday ASX | 5m yfinance | daily open/close |
 
+### Historical factor coverage & limitations
+
+- `^AXJO` is the anchor and currently provides data back to ~1992. All other
+  series are joined to its trading days using `asof` lookups, so a value may be
+  the last available close from a non-ASX holiday.
+- SPI 200 futures proxies (`AP=F`, `^AP`, `SPI1.AX`) are often unavailable in
+  `yfinance` for long history; the builder falls back to `^AXJO` itself for the
+  SPI basis/momentum factors. This is documented in the factor table.
+- `^A-VIX` has very limited free history, so `^VIX` is used as the volatility
+  proxy before `^A-VIX` becomes available.
+- Iron ore (`FE=F`, `TIO=F`, `MT=F`) is frequently missing; the fallback chain
+  uses the major miners (`BHP.AX`, `RIO.AX`, `FMG.AX`) and commodity proxies.
+- Housing & credit and China steel/property pulses are constructed from equity
+  proxies (REA/GMG/SCG/LLC, BHP/RIO/FMG/HG) because macro series with daily
+  history are not freely available through the chosen sources.
+- Older `^AXJO` candles from Yahoo Finance can have `Open=High=Low=Close` and
+  zero volume, which makes intraday/session factors default to neutral for those
+  dates; the model still uses overnight US, commodity and FX inputs.
+
+See `notebooks/build_historical_factors.py` for the full construction pipeline.
+
 ## Tests
 
 ```bash
@@ -141,7 +162,41 @@ python -m pytest tests -q
 ruff check src tests notebooks
 ```
 
-## Backtest
+## Historical factor data & backtest
+
+Build a full daily factor table. The script uses `yfinance` with the same ticker
+chains the live fetchers use, falls back transparently when a series is
+unavailable, and stores the result as Parquet + CSV in `data/`.
+
+```bash
+python notebooks/build_historical_factors.py --period max --output data/historical_factors.parquet --csv data/historical_factors.csv
+```
+
+Run the day-by-day backtest. By default it uses a configurable primary rule-score
+threshold (score strategy), which produces enough signals for meaningful
+statistics. You can also replay the exact `ScoringEngine` recommendation logic
+(engine strategy), and enable the trained ML layer with `--ml`.
+
+```bash
+# Configurable rule-score strategy (default)
+python notebooks/historical_backtest.py --factors data/historical_factors.parquet --start 2010-01-01 --strategy score --primary-threshold 0.6
+
+# Exact engine logic
+python notebooks/historical_backtest.py --factors data/historical_factors.parquet --start 2010-01-01 --strategy engine
+```
+
+Example output (2010–present, rule-score threshold 0.6, no ML):
+
+| Metric | Value |
+|--------|-------|
+| Signal days | 368 (8.8% of all days) |
+| Hit rate | 64.7% |
+| Avg return on signal days | +0.222% |
+| Simple total return (signals) | +81.58% |
+| Buy & hold annualised | ~4.97% |
+| Buy & hold up days | 53.6% |
+
+The original `notebooks/backtest.py` quick script is still available:
 
 ```bash
 python notebooks/backtest.py --months 12 --mock

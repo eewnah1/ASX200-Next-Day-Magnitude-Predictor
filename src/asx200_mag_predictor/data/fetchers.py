@@ -956,8 +956,7 @@ class ForexFactoryCalendar:
                     status="stale",
                     last_success_at=cache.get("cached_at", _aest_iso()),
                     value=(
-                        f"{data.get('high_impact_24h', 0)} high-impact events (24h)"
-                        " (stale cache)"
+                        f"{data.get('high_impact_24h', 0)} high-impact events (24h) (stale cache)"
                     ),
                     error=f"Live fetch failed, using cached calendar: {exc}",
                 )

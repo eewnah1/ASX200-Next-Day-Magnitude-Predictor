@@ -306,7 +306,7 @@ def compute_bollinger_position(
     window_closes = closes[-window:]
     sma = mean(window_closes)
     variance = sum((x - sma) ** 2 for x in window_closes) / window
-    std = variance ** 0.5
+    std = variance**0.5
     if std == 0:
         return None
     return (closes[-1] - sma) / std
@@ -590,20 +590,10 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
 
     # Technical indicators (derived from ASX cash closes)
     rsi = compute_rsi(asx_close) if len(asx_close) >= 15 else None
-    rsi_previous = (
-        compute_rsi(asx_close[:-1])
-        if len(asx_close) >= 16
-        else None
-    )
-    rsi_slope = (
-        rsi - rsi_previous
-        if rsi is not None and rsi_previous is not None
-        else None
-    )
+    rsi_previous = compute_rsi(asx_close[:-1]) if len(asx_close) >= 16 else None
+    rsi_slope = rsi - rsi_previous if rsi is not None and rsi_previous is not None else None
     rsi_score = score_rsi(rsi)
-    ath_distance = (
-        compute_distance_from_high(asx_close) if len(asx_close) >= 2 else None
-    )
+    ath_distance = compute_distance_from_high(asx_close) if len(asx_close) >= 2 else None
     high_20d_distance = (
         compute_distance_from_high(asx_close, days=20) if len(asx_close) >= 20 else None
     )

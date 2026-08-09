@@ -134,9 +134,7 @@ class ScoringEngine:
             "heavyweight_idio": _clamp(self.settings.heavyweight_idio_weight, 0.0, 1.0, 0.08),
             "rsi": _clamp(self.settings.rsi_weight, 0.0, 1.0, 0.10),
             "ath_distance": _clamp(self.settings.ath_distance_weight, 0.0, 1.0, 0.10),
-            "momentum_exhaustion": _clamp(
-                self.settings.momentum_exhaustion_weight, 0.0, 1.0, 0.08
-            ),
+            "momentum_exhaustion": _clamp(self.settings.momentum_exhaustion_weight, 0.0, 1.0, 0.08),
             "bollinger": _clamp(self.settings.bollinger_weight, 0.0, 1.0, 0.05),
         }
         # Normalise weights so they behave like relative allocations.
@@ -348,9 +346,7 @@ class ScoringEngine:
         )
         return probs, factor_breakdown
 
-    def _primary_model(
-        self, fv: FeatureVector
-    ) -> tuple[list[FactorContribution], float, str]:
+    def _primary_model(self, fv: FeatureVector) -> tuple[list[FactorContribution], float, str]:
         """Model 1: high-conviction large-move classifier with exact weights."""
         contributions: list[FactorContribution] = []
         total = 0.0
@@ -441,20 +437,14 @@ class ScoringEngine:
 
         # 5. Housing & Credit Pulse (8%)
         hc = fv.housing_credit_pulse_score
-        hc_score_val = _clamp(
-            (score_housing_credit_pulse(hc) or 0.0) * 2.0, -3.0, 3.0
-        )
+        hc_score_val = _clamp((score_housing_credit_pulse(hc) or 0.0) * 2.0, -3.0, 3.0)
         add(
             "Housing & Credit Pulse",
             hc,
             "0-10",
             hc_score_val,
             PRIMARY_WEIGHTS["housing_credit"],
-            (
-                f"pulse {hc:.1f}/10"
-                if hc is not None
-                else "No housing/credit proxy data"
-            ),
+            (f"pulse {hc:.1f}/10" if hc is not None else "No housing/credit proxy data"),
         )
 
         # 6. Heavyweight Idiosyncratic Score – CBA + BHP (8%)
@@ -531,20 +521,14 @@ class ScoringEngine:
 
         # 9. China Steel / Property Pulse (7%)
         china = fv.china_steel_property_return_pct
-        china_score_val = _clamp(
-            (score_china_steel_property(china) or 0.0) * 2.5, -3.0, 3.0
-        )
+        china_score_val = _clamp((score_china_steel_property(china) or 0.0) * 2.5, -3.0, 3.0)
         add(
             "China Steel / Property Pulse",
             china,
             "%",
             china_score_val,
             PRIMARY_WEIGHTS["china_steel_property"],
-            (
-                f"composite {china:+.2f}%"
-                if china is not None
-                else "No China steel/proxy data"
-            ),
+            (f"composite {china:+.2f}%" if china is not None else "No China steel/proxy data"),
         )
 
         # 10. Gold & Silver change (5%)
@@ -552,8 +536,7 @@ class ScoringEngine:
             values = [v for v in [fv.gold_change_pct, fv.silver_change_pct] if v is not None]
             pm_avg = sum(values) / len(values) if values else 0.0
             pm_note = (
-                f"gold {_fmt_pct(fv.gold_change_pct)}, "
-                f"silver {_fmt_pct(fv.silver_change_pct)}"
+                f"gold {_fmt_pct(fv.gold_change_pct)}, silver {_fmt_pct(fv.silver_change_pct)}"
             )
         else:
             pm_avg = 0.0
@@ -607,11 +590,7 @@ class ScoringEngine:
         rsi_for_gate = _clamp(fv.rsi_14, 0.0, 100.0, 50.0)
         ath_for_gate = _clamp(fv.ath_distance_pct, -50.0, 50.0, -5.0)
         iron_for_gate = fv.iron_ore_change_pct
-        if (
-            total >= 2.3
-            and rsi_for_gate <= 65
-            and ath_for_gate <= -1.0
-        ):
+        if total >= 2.3 and rsi_for_gate <= 65 and ath_for_gate <= -1.0:
             primary_bucket = "Large Up"
         elif (
             total <= -2.3
@@ -677,18 +656,13 @@ class ScoringEngine:
             "index",
             rsi_total,
             0.14,
-            (
-                f"RSI {rsi:.1f}, slope {slope:+.2f}pt"
-                if rsi is not None
-                else "No RSI data"
-            ),
+            (f"RSI {rsi:.1f}, slope {slope:+.2f}pt" if rsi is not None else "No RSI data"),
         )
 
         # 2. Short-term Momentum Exhaustion (11%)
         mom = fv.index_5d_return_pct
         mom_score = _clamp(
-            ((fv.momentum_exhaustion_score or 0.0) + (fv.profit_taking_combo_score or 0.0))
-            * 1.5,
+            ((fv.momentum_exhaustion_score or 0.0) + (fv.profit_taking_combo_score or 0.0)) * 1.5,
             -3.0,
             3.0,
         )
@@ -708,12 +682,8 @@ class ScoringEngine:
         # 3. Financials vs Materials (1d & 2d) (13%)
         fvm_1d = fv.financials_minus_materials_1d_pct
         fvm_2d = fv.financials_minus_materials_2d_pct
-        fvm_1d_score = _clamp(
-            (score_financials_vs_materials(fvm_1d) or 0.0) * 2.0, -3.0, 3.0
-        )
-        fvm_2d_score = _clamp(
-            (score_financials_vs_materials(fvm_2d) or 0.0) * 2.0, -3.0, 3.0
-        )
+        fvm_1d_score = _clamp((score_financials_vs_materials(fvm_1d) or 0.0) * 2.0, -3.0, 3.0)
+        fvm_2d_score = _clamp((score_financials_vs_materials(fvm_2d) or 0.0) * 2.0, -3.0, 3.0)
         fvm_score = _clamp((fvm_1d_score + fvm_2d_score) / 2.0, -3.0, 3.0)
         fvm_note = (
             f"1d {_fmt_pct(fvm_1d)}, 2d {_fmt_pct(fvm_2d)}"
@@ -738,11 +708,7 @@ class ScoringEngine:
             "%",
             ath_score_val,
             0.10,
-            (
-                f"ATH distance {_fmt_pct(ath)}"
-                if ath is not None
-                else "No price history"
-            ),
+            (f"ATH distance {_fmt_pct(ath)}" if ath is not None else "No price history"),
         )
 
         # 5. Iron Ore (9%)
@@ -785,20 +751,14 @@ class ScoringEngine:
 
         # 7. Housing & Credit (7%)
         hc = fv.housing_credit_pulse_score
-        hc_score_val = _clamp(
-            (score_housing_credit_pulse(hc) or 0.0) * 2.0, -3.0, 3.0
-        )
+        hc_score_val = _clamp((score_housing_credit_pulse(hc) or 0.0) * 2.0, -3.0, 3.0)
         add(
             "Housing & Credit",
             hc,
             "0-10",
             hc_score_val,
             0.07,
-            (
-                f"pulse {hc:.1f}/10"
-                if hc is not None
-                else "No housing/credit proxy data"
-            ),
+            (f"pulse {hc:.1f}/10" if hc is not None else "No housing/credit proxy data"),
         )
 
         # 8. US Equity Lead (7%)
@@ -837,20 +797,14 @@ class ScoringEngine:
 
         # 10. China Pulse (6%)
         china = fv.china_steel_property_return_pct
-        china_score_val = _clamp(
-            (score_china_steel_property(china) or 0.0) * 2.5, -3.0, 3.0
-        )
+        china_score_val = _clamp((score_china_steel_property(china) or 0.0) * 2.5, -3.0, 3.0)
         add(
             "China Pulse",
             china,
             "%",
             china_score_val,
             0.06,
-            (
-                f"composite {china:+.2f}%"
-                if china is not None
-                else "No China steel/proxy data"
-            ),
+            (f"composite {china:+.2f}%" if china is not None else "No China steel/proxy data"),
         )
 
         # 11. Gold & Silver (5%)
@@ -858,8 +812,7 @@ class ScoringEngine:
             values = [v for v in [fv.gold_change_pct, fv.silver_change_pct] if v is not None]
             pm_avg = sum(values) / len(values) if values else 0.0
             pm_note = (
-                f"gold {_fmt_pct(fv.gold_change_pct)}, "
-                f"silver {_fmt_pct(fv.silver_change_pct)}"
+                f"gold {_fmt_pct(fv.gold_change_pct)}, silver {_fmt_pct(fv.silver_change_pct)}"
             )
         else:
             pm_avg = 0.0
@@ -998,9 +951,7 @@ class ScoringEngine:
                 return s.get("status")
             return getattr(s, "status", None)
 
-        flag_count = sum(
-            1 for s in (fv.source_status or []) if _status(s) not in ("ok", None)
-        )
+        flag_count = sum(1 for s in (fv.source_status or []) if _status(s) not in ("ok", None))
         penalty = min(flag_count * 0.05, 0.25)
         return max(0.2, min(1.0, base_conf - penalty))
 
@@ -1026,9 +977,7 @@ class ScoringEngine:
 
         # Strong downside confirmation (used for STAY IN CASH).
         strong_downside = (
-            rsi >= 70
-            and ath >= -1.0
-            and ((iron is not None and iron <= -0.6) or fvm <= -0.5)
+            rsi >= 70 and ath >= -1.0 and ((iron is not None and iron <= -0.6) or fvm <= -0.5)
         )
 
         p_up = ml_primary_probs.get("Large Up", 0.0) if ml_primary_probs else 0.0
@@ -1045,14 +994,8 @@ class ScoringEngine:
         data_penalty = min(len(degraded_sources) * 0.05, 0.25)
 
         # 1. Primary GO LONG.
-        primary_go_long = (
-            primary_score >= 1.0
-            and p_up >= 0.60
-            and not technicals_bearish
-        ) or (
-            primary_score >= 2.0
-            and not technicals_bearish
-            and ml_primary_probs is None
+        primary_go_long = (primary_score >= 1.0 and p_up >= 0.60 and not technicals_bearish) or (
+            primary_score >= 2.0 and not technicals_bearish and ml_primary_probs is None
         )
         if primary_go_long:
             if ml_primary_probs is not None:
@@ -1087,8 +1030,8 @@ class ScoringEngine:
         # 4. Default: STAY IN CASH (or HOLD EXISTING if already in a position).
         if cash_triggered:
             source = "Secondary" if secondary_bucket == "Mild Bearish Bias" else "Primary"
-            conf = 0.50 + 0.40 * max(p_down, p_mild_bear) + 0.20 * min(
-                abs(primary_score) / 3.0, 1.0
+            conf = (
+                0.50 + 0.40 * max(p_down, p_mild_bear) + 0.20 * min(abs(primary_score) / 3.0, 1.0)
             )
         else:
             source = "Primary"
@@ -1360,9 +1303,7 @@ class ScoringEngine:
                 return s.get("status")
             return getattr(s, "status", None)
 
-        flag_count = sum(
-            1 for s in (fv.source_status or []) if _status(s) not in ("ok", None)
-        )
+        flag_count = sum(1 for s in (fv.source_status or []) if _status(s) not in ("ok", None))
         penalty = min(flag_count * 0.05, 0.25)
         return max(0.2, min(1.0, base_conf - penalty))
 
@@ -1388,6 +1329,7 @@ class ScoringEngine:
             if v != "ok" and k not in degraded_sources:
                 degraded_sources.append(k)
         return bool(degraded_sources), degraded_sources
+
 
 def bucket_from_return(return_pct: float) -> str:
     """Map an actual signed return to the primary-model bucket label."""
