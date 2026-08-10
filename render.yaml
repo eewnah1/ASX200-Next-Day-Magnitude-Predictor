@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: asx200-mag-predictor
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: singapore
+    healthCheckPath: /health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        value: sqlite:////data/asx200_predictor.db
+      - key: TZ
+        value: Australia/Sydney
+      - key: NEWSAPI_API_KEY
+        sync: false
+      - key: MARKETAUX_API_KEY
+        sync: false
+    disk:
+      name: asx200-data
+      mountPath: /data
+      sizeGB: 1
