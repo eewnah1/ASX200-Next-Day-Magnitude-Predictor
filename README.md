@@ -2,6 +2,64 @@
 
 A production-quality Python application that produces calibrated probabilities for the next ASX 200 trading day's absolute percentage move.
 
+**Public dashboard** (after deploy):
+
+- Fly.io: https://asx200-mag-pred.fly.dev
+- Or your Render URL after one-click deploy
+
+The HTML dashboard at `/` has a prominent **Run prediction now** button.
+
+## Deploy (public URL)
+
+### Option A — Fly.io (recommended, Singapore region)
+
+The previous app name `asx200-magnitude-predictor` was not healthy. Config is now fixed with a new app name, volume, health checks and proper system dependencies.
+
+```bash
+# 1. Install flyctl if needed: https://fly.io/docs/hands-on/install-flyctl/
+fly auth login
+
+# 2. Create the new app + volume (first time only)
+fly apps create asx200-mag-pred --org personal   # or your org
+fly volumes create asx200_data --region sin --size 1 --app asx200-mag-pred
+
+# 3. Deploy
+fly deploy --app asx200-mag-pred
+
+# 4. Open
+fly open --app asx200-mag-pred
+# → https://asx200-mag-pred.fly.dev
+```
+
+Optional secrets (calendar features):
+
+```bash
+fly secrets set NEWSAPI_API_KEY=... MARKETAUX_API_KEY=... --app asx200-mag-pred
+```
+
+If the old app still exists and is stuck:
+
+```bash
+fly apps destroy asx200-magnitude-predictor --yes
+```
+
+### Option B — Render.com (easiest free public URL)
+
+1. Go to https://dashboard.render.com → New → Blueprint
+2. Connect this GitHub repo
+3. Render will detect `render.yaml` and create a free web service + disk
+4. Public URL will look like `https://asx200-mag-predictor.onrender.com`
+
+You can also click **Deploy to Render** if you add the button later.
+
+### Local Docker (for testing the same image)
+
+```bash
+docker build -t asx200-pred .
+docker run -p 8000:8000 -v $(pwd)/data:/data asx200-pred
+# open http://localhost:8000  → Run prediction now button
+```
+
 ## Goal
 
 Before 2pm AEST on ASX trading days, predict whether the next ASX 200 cash session will move:
@@ -62,10 +120,11 @@ Run a mock prediction (no network):
 python -m asx200_mag_predictor.cli predict --mock
 ```
 
-Run the FastAPI backend:
+Run the FastAPI backend (serves the public dashboard with the Run button):
 
 ```bash
 uvicorn asx200_mag_predictor.api.main:app --reload --port 8000
+# open http://localhost:8000
 ```
 
 Run the Streamlit UI:
