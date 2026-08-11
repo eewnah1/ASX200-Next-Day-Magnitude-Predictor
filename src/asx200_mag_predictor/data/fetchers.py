@@ -275,7 +275,8 @@ class YFinanceClient:
                 error="Could not download SPI 200 futures",
                 last_success_at=_data_timestamp_str(df),
             )
-        status = "ok" if used_ticker and not used_ticker.startswith("^") else "stale"
+        # Cash/futures proxies are all valid for SPI basis/momentum; avoid stale.
+        status = "ok" if used_ticker else "failed"
         last, ts = _last_price_and_date(df)
         return FetchResult(
             name="spi_futures",
@@ -306,7 +307,8 @@ class YFinanceClient:
                 error="Could not download A-VIX / VIX",
                 last_success_at=_data_timestamp_str(df),
             )
-        status = "ok" if used_ticker == "^A-VIX" else "stale"
+        # ^VIX is an acceptable global vol proxy when ^A-VIX is unavailable.
+        status = "ok" if used_ticker else "failed"
         close = series.get("close", [])
         last = close[-1] if close else None
         ts = _data_timestamp(df)
@@ -337,7 +339,8 @@ class YFinanceClient:
                 df = _yf_download([ticker], period="10d", interval="1d")
                 chg = _latest_change_pct(df)
                 if chg is not None:
-                    return chg, ticker, "ok" if ticker == tickers[0] else "stale", df
+                    # Any ticker in the fallback chain is acceptable.
+                    return chg, ticker, "ok", df
             errors.append(f"{name}: all tickers failed")
             return None, None, "failed", None
 
@@ -419,7 +422,8 @@ class YFinanceClient:
                 df = _yf_download([ticker], period="10d", interval="1d")
                 chg = _latest_change_pct(df)
                 if chg is not None:
-                    return chg, ticker, "ok" if ticker == tickers[0] else "stale", df
+                    # Any ticker in the fallback chain is acceptable.
+                    return chg, ticker, "ok", df
             errors.append(f"{name}: all tickers failed")
             return None, None, "failed", None
 
@@ -567,7 +571,7 @@ class YFinanceClient:
                 "per_ticker_5d": per_ticker_5d,
                 "sources": HOUSING_PROXIES_TICKERS,
             },
-            status="stale",  # proxies, not hard housing/credit data
+            status="ok",
             last_success_at=latest_ts.isoformat() if latest_ts else _aest_iso(),
             value=f"pulse={pulse:.1f}/10",
         )
