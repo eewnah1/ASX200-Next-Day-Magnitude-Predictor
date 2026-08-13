@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Body, HTTPException, Query
 from pydantic import BaseModel
@@ -154,7 +154,7 @@ async def backtest_summary() -> dict[str, Any]:
 
     summary_path = Path(__file__).parent.parent / "daily_rates_backtest_summary.json"
     if summary_path.exists():
-        return json.loads(summary_path.read_text())
+        return cast(dict[str, Any], json.loads(summary_path.read_text()))
     return {"error": "Backtest summary not available"}
 
 

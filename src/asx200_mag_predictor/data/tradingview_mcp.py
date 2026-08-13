@@ -12,7 +12,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from asx200_mag_predictor.logging_config import get_logger
 
@@ -51,7 +51,7 @@ def _run_fiale_cli(*args: str) -> dict[str, Any]:
         if proc.returncode != 0:
             err = proc.stderr.strip() or proc.stdout.strip()
             return {"error": f"fiale-plus CLI failed: {err}"}
-        return json.loads(proc.stdout)
+        return cast(dict[str, Any], json.loads(proc.stdout))
     except json.JSONDecodeError as exc:
         logger.exception("Could not parse fiale-plus output")
         return {"error": f"fiale-plus output parse error: {exc}"}
@@ -84,7 +84,7 @@ def atila_symbol_analysis(symbol: str, exchange: str) -> dict[str, Any]:
             run_multi_agent_analysis,
         )
 
-        result = run_multi_agent_analysis(symbol, exchange, "1D")
+        result = cast(dict[str, Any], run_multi_agent_analysis(symbol, exchange, "1D"))
         result["source"] = "atilaahmettaner/tradingview-mcp"
         return result
     except Exception as exc:  # noqa: BLE001
