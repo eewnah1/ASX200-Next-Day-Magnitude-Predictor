@@ -262,6 +262,21 @@ python notebooks/backtest.py --months 12 --mock
 python notebooks/backtest.py --months 3
 ```
 
+## Live dashboard
+
+No-auth public dashboard: https://makeup-resistant-reviews-magnet.trycloudflare.com
+
+## TradingView MCP endpoints
+
+The backend exposes TradingView market data via `atilaahmettaner/tradingview-mcp` and `fiale-plus/tradingview-mcp-server`:
+
+- `GET /api/v1/tradingview/insights` — combined ASX 200 market snapshot, TA, price and screener
+- `GET /api/v1/tradingview/market-snapshot` — global market snapshot
+- `GET /api/v1/tradingview/ta/{symbol}?exchange=asx` — multi-agent technical analysis
+- `GET /api/v1/tradingview/price/{symbol}` — latest price quote
+- `GET /api/v1/tradingview/screen?asset_type=stocks&preset=quality_stocks&limit=10` — TradingView screener
+- `GET /api/v1/tradingview/lookup?symbols=ASX:CBA,ASX:BHP` — symbol lookup
+
 ## Docker
 
 ```bash
