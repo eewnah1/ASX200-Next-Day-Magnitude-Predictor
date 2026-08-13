@@ -128,6 +128,27 @@
       <h2>Daily-rates high-conviction backtest</h2>
       <div id="backtestSummary">Loading backtest summary...</div>
     </div>
+
+    <div class="card" style="grid-column: 1 / -1;">
+      <h2>TradingView MCP Intelligence</h2>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+        <button onclick="loadTvInsights()">All insights</button>
+        <button onclick="loadTvSnapshot()">Market snapshot</button>
+        <button onclick="loadTvTa()">ASX 200 TA</button>
+        <button onclick="loadTvScreen()">Quality screener</button>
+        <button onclick="loadTvLookup()">Lookup CBA, BHP, WDS</button>
+      </div>
+      <div id="tvStatus" class="status"></div>
+      <div id="tvPanel" style="display:none;">
+        <div id="tvTabs" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+          <button onclick="showTv('snapshot')">Snapshot</button>
+          <button onclick="showTv('ta')">TA</button>
+          <button onclick="showTv('screen')">Screen</button>
+          <button onclick="showTv('lookup')">Lookup</button>
+        </div>
+        <pre id="tvContent" style="background:#0b1220;padding:12px;border-radius:8px;overflow-x:auto;font-size:0.85rem;max-height:500px;overflow-y:auto;"></pre>
+      </div>
+    </div>
   </div>
 
   <details id="errorsPanel" style="display:none;">
@@ -454,6 +475,32 @@
       const p = window._lastPrediction;
       if (p) displayRecommendation(p);
     });
+
+    let _tvData = {};
+    function showTv(key) {
+      $('tvPanel').style.display = 'block';
+      if (_tvData[key] !== undefined) {
+        $('tvContent').textContent = JSON.stringify(_tvData[key], null, 2);
+      } else {
+        $('tvContent').textContent = 'Click a button above to load ' + key + ' data.';
+      }
+    }
+    async function loadTv(path, key) {
+      $('tvStatus').textContent = 'Loading ' + key + '...';
+      try {
+        const data = await api(path);
+        _tvData[key] = data;
+        showTv(key);
+        $('tvStatus').textContent = '';
+      } catch (e) {
+        $('tvStatus').textContent = 'Error: ' + e.message;
+      }
+    }
+    function loadTvInsights() { loadTv('/tradingview/insights', 'insights'); }
+    function loadTvSnapshot() { loadTv('/tradingview/market-snapshot', 'snapshot'); }
+    function loadTvTa() { loadTv('/tradingview/ta/ASX:XJO?exchange=asx', 'ta'); }
+    function loadTvScreen() { loadTv('/tradingview/screen?asset_type=stocks&preset=quality_stocks&limit=10', 'screen'); }
+    function loadTvLookup() { loadTv('/tradingview/lookup?symbols=ASX:CBA,ASX:BHP,ASX:WDS', 'lookup'); }
 
     (async () => {
       await Promise.all([loadLatest(), loadCalibration(), loadCalendar(), loadBacktestSummary()]);

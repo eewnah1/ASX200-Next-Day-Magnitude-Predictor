@@ -176,3 +176,74 @@ async def train_ml() -> dict[str, Any]:
 async def run_daily() -> dict[str, Any]:
     """Manual trigger of the daily job."""
     return await predict_manual(PredictRequest(notes="daily-run"))
+
+
+@router.get("/tradingview/insights")
+async def tradingview_insights() -> dict[str, Any]:
+    """Combined TradingView MCP market snapshot and ASX 200 analysis."""
+    import asyncio
+
+    from asx200_mag_predictor.data.tradingview_mcp import get_asx200_insights
+
+    try:
+        return await asyncio.to_thread(get_asx200_insights)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("TradingView insights failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/tradingview/market-snapshot")
+async def tradingview_market_snapshot() -> dict[str, Any]:
+    """Global market snapshot from atilaahmettaner/tradingview-mcp."""
+    import asyncio
+
+    from asx200_mag_predictor.data.tradingview_mcp import atila_market_snapshot
+
+    return await asyncio.to_thread(atila_market_snapshot)
+
+
+@router.get("/tradingview/ta/{symbol:path}")
+async def tradingview_ta(symbol: str, exchange: str = "asx") -> dict[str, Any]:
+    """Multi-timeframe technical analysis for a TradingView symbol."""
+    import asyncio
+
+    from asx200_mag_predictor.data.tradingview_mcp import atila_symbol_analysis
+
+    return await asyncio.to_thread(atila_symbol_analysis, symbol, exchange)
+
+
+@router.get("/tradingview/price/{symbol:path}")
+async def tradingview_price(symbol: str) -> dict[str, Any]:
+    """Latest price quote for a single symbol."""
+    import asyncio
+
+    from asx200_mag_predictor.data.tradingview_mcp import atila_price
+
+    return await asyncio.to_thread(atila_price, symbol)
+
+
+@router.get("/tradingview/screen")
+async def tradingview_screen(
+    asset_type: str = "stocks",
+    preset: str = "quality_stocks",
+    limit: int = 10,
+) -> dict[str, Any]:
+    """Run a TradingView screener preset via fiale-plus/tradingview-mcp-server."""
+    import asyncio
+
+    from asx200_mag_predictor.data.tradingview_mcp import fiale_screen
+
+    return await asyncio.to_thread(fiale_screen, asset_type, preset, limit)
+
+
+@router.get("/tradingview/lookup")
+async def tradingview_lookup(symbols: str) -> dict[str, Any]:
+    """Look up one or more TradingView symbols (comma-separated)."""
+    import asyncio
+
+    from asx200_mag_predictor.data.tradingview_mcp import fiale_lookup
+
+    parts = [s.strip() for s in symbols.split(",") if s.strip()]
+    if not parts:
+        raise HTTPException(status_code=400, detail="No symbols provided")
+    return await asyncio.to_thread(fiale_lookup, *parts)
