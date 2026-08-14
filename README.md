@@ -264,7 +264,7 @@ python notebooks/backtest.py --months 3
 
 ## Live dashboard
 
-No-auth public dashboard: https://illinois-logging-depot-conf.trycloudflare.com
+No-auth public dashboard: https://purple-pugs-hug.loca.lt
 
 ## TradingView MCP endpoints
 
