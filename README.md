@@ -264,7 +264,7 @@ python notebooks/backtest.py --months 3
 
 ## Live dashboard
 
-No-auth public dashboard: https://orange-aliens-tie.loca.lt
+No-auth public dashboard: https://colour-fever-firewire-formerly.trycloudflare.com
 
 ## TradingView MCP endpoints
 
