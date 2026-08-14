@@ -264,7 +264,7 @@ python notebooks/backtest.py --months 3
 
 ## Live dashboard
 
-No-auth public dashboard: https://allows-blind-marijuana-shaft.trycloudflare.com
+No-auth public dashboard: https://orange-aliens-tie.loca.lt
 
 ## TradingView MCP endpoints
 
