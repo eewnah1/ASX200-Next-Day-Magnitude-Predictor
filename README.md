@@ -264,7 +264,7 @@ python notebooks/backtest.py --months 3
 
 ## Live dashboard
 
-No-auth public dashboard: https://colour-fever-firewire-formerly.trycloudflare.com
+No-auth public dashboard: https://illinois-logging-depot-conf.trycloudflare.com
 
 ## TradingView MCP endpoints
 
