@@ -264,7 +264,7 @@ python notebooks/backtest.py --months 3
 
 ## Live dashboard
 
-No-auth public dashboard: https://purple-pugs-hug.loca.lt
+No-auth public dashboard: https://5matsd4h6rnehf6ptiw66qfa7y.srv.us
 
 ## TradingView MCP endpoints
 
