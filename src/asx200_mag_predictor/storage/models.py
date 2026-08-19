@@ -50,6 +50,19 @@ class PredictionRecord(Base):
     recommendation_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     in_position: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
+    # Production hardening / audit
+    model_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    regime: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    regime_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    graduated_signal: Mapped[float | None] = mapped_column(Float, nullable=True)
+    graduated_recommendation: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    graduated_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sizing_guidance: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    gap_risk_note: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    hard_gate_triggered: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    soft_gate_penalty: Mapped[float | None] = mapped_column(Float, nullable=True)
+    audit_log_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+
     actual: Mapped["ActualRecord"] = relationship(back_populates="prediction", uselist=False)
 
 
@@ -118,6 +131,17 @@ def _add_missing_columns(engine) -> None:
             ("recommendation_source", "VARCHAR"),
             ("recommendation_confidence", "FLOAT"),
             ("in_position", "BOOLEAN"),
+            ("model_version", "VARCHAR"),
+            ("regime", "VARCHAR"),
+            ("regime_confidence", "FLOAT"),
+            ("graduated_signal", "FLOAT"),
+            ("graduated_recommendation", "VARCHAR"),
+            ("graduated_confidence", "FLOAT"),
+            ("sizing_guidance", "VARCHAR"),
+            ("gap_risk_note", "VARCHAR"),
+            ("hard_gate_triggered", "BOOLEAN"),
+            ("soft_gate_penalty", "FLOAT"),
+            ("audit_log_id", "VARCHAR"),
         ],
         "actuals": [
             ("actual_return_pct", "FLOAT"),

@@ -19,6 +19,7 @@ from typing import Any
 
 import numpy as np
 
+from asx200_mag_predictor import __version__
 from asx200_mag_predictor.config import Settings, get_settings
 from asx200_mag_predictor.logging_config import get_logger
 from asx200_mag_predictor.models import (
@@ -462,6 +463,10 @@ class ScoringEngine:
         else:
             notes_for_hc = ""
 
+        notes: list[str] = []
+        if notes_for_hc:
+            notes.append(notes_for_hc)
+
         # Model 2: secondary neutral-zone bias extractor (only if primary is Neutral).
         secondary_contributions: list[FactorContribution] = []
         secondary_score = 0.0
@@ -496,6 +501,18 @@ class ScoringEngine:
             self._graduated_recommendation(primary_score, confidence)
         )
         degraded, degraded_sources = self._degraded_status(fv, flags)
+        hard_gate_triggered = self._hard_gate_triggered(fv, flags, degraded_sources)
+        soft_gate_penalty = round(min(len(degraded_sources) * 0.05, 0.25), 4)
+
+        # Hard gate: if a critical data source has failed, do not take a new directional position.
+        if hard_gate_triggered and recommendation not in ("STAY IN CASH", "HOLD EXISTING"):
+            recommendation = "STAY IN CASH"
+            recommendation_source = "Primary (hard gate)"
+            confidence = max(0.3, confidence - 0.2)
+            notes.append(
+                f"Hard gate triggered: critical source failure ({', '.join(degraded_sources)}). "
+                "Directional signal blocked."
+            )
 
         ml_available = self.hybrid_ml.available and ml_primary_probs is not None
         fallback_reason = None
@@ -504,9 +521,6 @@ class ScoringEngine:
                 primary_fallback or secondary_fallback or "ML models not trained or unavailable"
             )
 
-        notes: list[str] = []
-        if notes_for_hc:
-            notes.append(notes_for_hc)
         notes.append(f"Active model: {model}; primary bucket: {primary_bucket}")
         notes.append(f"Active regime: {regime} ({regime_note})")
         if ml_available and ml_primary_probs:
@@ -550,6 +564,38 @@ class ScoringEngine:
                 "Already in position – negative signal converted to HOLD EXISTING (no exit)."
             )
 
+        # Optional enrichment factor visibility (weight 0 so they do not alter
+        # the calibrated primary score; they are already available to the ML layer).
+        if fv.news_sentiment_score is not None:
+            factor_contributions.append(
+                FactorContribution(
+                    name="News / Sentiment",
+                    raw_value=fv.news_sentiment_score,
+                    raw_unit="score",
+                    direction=_direction_label(fv.news_sentiment_score),
+                    weight=0.0,
+                    score=0.0,
+                    note=f"entity/sector sentiment score={fv.news_sentiment_score:+.2f}",
+                    group="Optional",
+                )
+            )
+        if fv.options_positioning_score is not None:
+            factor_contributions.append(
+                FactorContribution(
+                    name="Options / Positioning",
+                    raw_value=fv.options_positioning_score,
+                    raw_unit="score",
+                    direction=_direction_label(-fv.options_positioning_score),
+                    weight=0.0,
+                    score=0.0,
+                    note=fv.options_positioning_note or "options positioning context",
+                    group="Optional",
+                )
+            )
+
+        sizing_guidance = self._sizing_guidance(recommendation, primary_score, confidence, fv)
+        gap_risk_note = self._gap_risk_note(recommendation, fv)
+
         return Prediction(
             prediction_for_date=prediction_for_date,
             data_as_of=fv.data_as_of,
@@ -591,6 +637,14 @@ class ScoringEngine:
             graduated_signal=graduated_signal,
             graduated_recommendation=graduated_recommendation,
             graduated_confidence=graduated_confidence,
+            news_sentiment_score=fv.news_sentiment_score,
+            options_positioning_score=fv.options_positioning_score,
+            options_positioning_note=fv.options_positioning_note,
+            model_version=__version__,
+            sizing_guidance=sizing_guidance,
+            gap_risk_note=gap_risk_note,
+            hard_gate_triggered=hard_gate_triggered,
+            soft_gate_penalty=soft_gate_penalty,
             **hc_kwargs,
         )
 
@@ -1958,6 +2012,79 @@ class ScoringEngine:
             if v != "ok" and k not in degraded_sources:
                 degraded_sources.append(k)
         return bool(degraded_sources), degraded_sources
+
+    def _critical_sources(self) -> set[str]:
+        """Sources whose failure invalidates high-conviction directional signals."""
+        return {
+            "spi_futures",
+            "commodities",
+            "financials_vs_materials",
+            "us_assets",
+            "asian_session",
+            "rba_rates",
+            "asx_cash",
+        }
+
+    def _hard_gate_triggered(
+        self, fv: FeatureVector, flags: DataQualityFlags, degraded_sources: list[str]
+    ) -> bool:
+        """True when a critical source has completely failed."""
+        critical = self._critical_sources()
+        # Direct source_status failures.
+        for s in fv.source_status or []:
+            if isinstance(s, DataSourceStatus):
+                status = s.status
+                name = s.name
+            elif isinstance(s, dict):
+                status = s.get("status")
+                name = s.get("name", "unknown")
+            else:
+                status = getattr(s, "status", None)
+                name = getattr(s, "name", "unknown")
+            if status == "failed" and name in critical:
+                return True
+        # Flag-level failures.
+        for k, v in flags.model_dump().items():
+            if v == "failed" and k in critical:
+                return True
+        return False
+
+    def _sizing_guidance(
+        self, recommendation: str, primary_score: float, confidence: float, fv: FeatureVector
+    ) -> str:
+        """Surface SPI/Mini-SPI sizing guidance when the model is not in cash."""
+        if recommendation in ("STAY IN CASH", "HOLD EXISTING"):
+            return "No new position. Reduce / hold existing exposure until signal clears."
+        vol_regime = fv.vol_regime or 1
+        base = abs(primary_score)
+        if confidence >= 0.75 and base >= 2.0 and vol_regime <= 1:
+            return (
+                "High conviction, calm vol: consider full SPI/Mini-SPI position "
+                "(with hard stop)."
+            )
+        if confidence >= 0.60 and base >= 1.0 and vol_regime <= 2:
+            return "Moderate conviction: consider a half-to-full SPI/Mini-SPI position."
+        if vol_regime >= 3:
+            return "Elevated volatility: size down; use Mini-SPI or widen stops."
+        return "Low conviction / mixed conditions: keep size small or stay flat."
+
+    def _gap_risk_note(self, recommendation: str, fv: FeatureVector) -> str:
+        """Overnight gap-risk note when the recommendation is not STAY IN CASH."""
+        if recommendation in ("STAY IN CASH", "HOLD EXISTING"):
+            return "No active directional exposure; gap risk is contained."
+        gap = fv.overnight_gap_pct
+        a_vix = fv.a_vix
+        atr = fv.atr_5d_pct
+        parts: list[str] = []
+        if gap is not None and abs(gap) >= 0.5:
+            parts.append(f"overnight gap {gap:+.2f}%")
+        if a_vix is not None and a_vix >= 20:
+            parts.append(f"elevated A-VIX {a_vix:.1f}")
+        if atr is not None and atr >= 1.2:
+            parts.append(f"5d ATR {atr:.2f}%")
+        if parts:
+            return "Overnight gap risk: " + ", ".join(parts) + "; size/widen stops accordingly."
+        return "Overnight gap risk appears normal; use a stop near prior session low/high."
 
 
 def bucket_from_return(return_pct: float) -> str:

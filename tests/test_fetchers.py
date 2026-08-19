@@ -1,4 +1,4 @@
-"""Unit tests for the SPI 200 futures fetcher hardening."""
+"""Unit tests for the SPI 200 futures fetcher hardening and optional enrichment."""
 
 from __future__ import annotations
 
@@ -7,7 +7,10 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
-from asx200_mag_predictor.data.fetchers import YFinanceClient
+from asx200_mag_predictor.config import Settings
+from asx200_mag_predictor.data.fetchers import YFinanceClient, _is_spi_fresh
+from asx200_mag_predictor.data.news_sentiment_fetcher import NewsSentimentFetcher
+from asx200_mag_predictor.data.options_positioning_fetcher import OptionsPositioningFetcher
 
 
 def _make_df(timestamp: datetime, close: float = 7000.0) -> pd.DataFrame:
@@ -116,3 +119,33 @@ def test_spi_futures_missing(client: YFinanceClient, monkeypatch: pytest.MonkeyP
     assert result.status == "failed"
     assert result.ticker is None
     assert result.error is not None
+
+
+def test_is_spi_fresh_tolerates_vendor_lag() -> None:
+    """A daily bar from the previous session is still fresh within the tolerance window."""
+    now = datetime(2026, 8, 10, 9, 0)  # Monday 09:00
+    ts = datetime(2026, 8, 7, 0, 0)  # Friday bar (one session behind)
+    assert _is_spi_fresh(ts, now, Settings(spi_freshness_hours=96)) is True
+
+
+def test_is_spi_fresh_rejects_very_stale_data() -> None:
+    """A bar older than the tolerance window is correctly rejected."""
+    now = datetime(2026, 8, 10, 9, 0)
+    ts = datetime(2026, 8, 3, 0, 0)  # Monday previous week -> ~153h
+    assert _is_spi_fresh(ts, now, Settings(spi_freshness_hours=96)) is False
+
+
+def test_news_sentiment_disabled_gracefully() -> None:
+    """When news/sentiment is disabled, the fetcher returns a failed-but-safe result."""
+    settings = Settings(news_sentiment_enabled=False)
+    fetcher = NewsSentimentFetcher(settings)
+    result = fetcher.fetch()
+    assert result.status == "disabled"
+
+
+def test_options_positioning_disabled_gracefully() -> None:
+    """When options positioning is disabled, the fetcher returns a disabled dict."""
+    settings = Settings(options_positioning_enabled=False)
+    fetcher = OptionsPositioningFetcher(settings)
+    result = fetcher.fetch()
+    assert result["status"] == "disabled"

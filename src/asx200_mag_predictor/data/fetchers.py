@@ -8,6 +8,7 @@ the `RawMarketData` object the feature builder consumes.
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
@@ -18,6 +19,8 @@ import yfinance as yf
 
 from asx200_mag_predictor.config import Settings, get_settings
 from asx200_mag_predictor.data.alpha_vantage_fetcher import AlphaVantageFetcher
+from asx200_mag_predictor.data.news_sentiment_fetcher import NewsSentimentFetcher
+from asx200_mag_predictor.data.options_positioning_fetcher import OptionsPositioningFetcher
 from asx200_mag_predictor.data.tradingview_fetcher import TradingViewFetcher
 from asx200_mag_predictor.logging_config import get_logger
 from asx200_mag_predictor.scoring.features import RawMarketData
@@ -326,12 +329,17 @@ def _spi_data_age_hours(ts: datetime | None, now: datetime | None = None) -> flo
     return max(0.0, (now_syd - ts_syd).total_seconds() / 3600.0)
 
 
-def _is_spi_fresh(ts: datetime | None, now: datetime | None = None) -> bool:
+def _is_spi_fresh(
+    ts: datetime | None,
+    now: datetime | None = None,
+    settings: Settings | None = None,
+) -> bool:
     """True when the SPI timestamp is from the latest available ASX session or later.
 
-    This avoids false staleness on Monday morning when the last futures/cash bar
-    is from Friday's close, while still flagging data that is older than the most
-    recent ASX cash close.
+    The timestamp is fresh if it is dated the same day as (or later than) the most
+    recent ASX close.  A configurable tolerance window also accepts daily bars
+    from the immediately preceding session so that vendor lag (e.g. ^AXJO daily
+    bars released one session late) does not trigger spurious degradation.
     """
     ts_syd = _sydney_ts(ts)
     if ts_syd is None:
@@ -340,8 +348,11 @@ def _is_spi_fresh(ts: datetime | None, now: datetime | None = None) -> bool:
     if now_syd.tzinfo is None:
         now_syd = to_sydney(now_syd)
     latest_close = previous_asx_session_close(now_syd)
-    # Compare dates to be tolerant of time-of-day and timezone noise.
-    return ts_syd.date() >= latest_close.date()
+    if ts_syd.date() >= latest_close.date():
+        return True
+    settings = settings or get_settings()
+    age_hours = (now_syd - ts_syd).total_seconds() / 3600.0
+    return age_hours <= float(settings.spi_freshness_hours)
 
 
 class YFinanceClient:
@@ -412,7 +423,7 @@ class YFinanceClient:
 
         last, ts = _last_price_and_date(df)
         data_age_hours = _spi_data_age_hours(ts, now)
-        fresh = _is_spi_fresh(ts, now)
+        fresh = _is_spi_fresh(ts, now, self.settings)
         cash_proxy = used_ticker == "^AXJO"
         status = "ok" if fresh else "stale"
         error: str | None = None
@@ -1321,6 +1332,8 @@ class DataFetcher:
         self.marketaux_calendar = MarketAuxCalendar(settings)
         self.tv = TradingViewFetcher()
         self.av = AlphaVantageFetcher(settings)
+        self.news = NewsSentimentFetcher(settings)
+        self.options = OptionsPositioningFetcher(settings)
 
     def fetch_all(self) -> RawMarketData:
         """Fetch every data source, cache the snapshot, and return raw data."""
@@ -1376,6 +1389,70 @@ class DataFetcher:
                     errors.append(f"MarketAux: {cal.error}")
         results["calendar"] = cal
 
+        # Optional enrichment layers (bounded latency; failures are non-blocking)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            news_future = executor.submit(self.news.fetch)
+            options_future = executor.submit(self.options.fetch)
+            try:
+                news_raw = news_future.result(timeout=18.0)
+                # NewsSentimentFetcher returns a dataclass; normalise to a dict.
+                news_result = (
+                    news_raw
+                    if isinstance(news_raw, dict)
+                    else news_raw.__dict__
+                )
+            except TimeoutError:
+                news_result = {
+                    "name": "news_sentiment",
+                    "status": "failed",
+                    "error": "timeout",
+                    "data": {},
+                }
+            except Exception as exc:  # noqa: BLE001
+                news_result = {
+                    "name": "news_sentiment",
+                    "status": "failed",
+                    "error": str(exc),
+                    "data": {},
+                }
+            try:
+                options_result = options_future.result(timeout=18.0)
+            except TimeoutError:
+                options_result = {
+                    "name": "options_positioning",
+                    "status": "failed",
+                    "error": "timeout",
+                    "data": {},
+                }
+            except Exception as exc:  # noqa: BLE001
+                options_result = {
+                    "name": "options_positioning",
+                    "status": "failed",
+                    "error": str(exc),
+                    "data": {},
+                }
+
+        results["news_sentiment"] = FetchResult(
+            name="news_sentiment",
+            status=news_result.get("status", "failed"),
+            data=news_result,
+            error=news_result.get("error"),
+            last_success_at=_aest_iso(),
+            value=(
+                f"score={news_result.get('score')}"
+                if news_result.get("score") is not None
+                else None
+            ),
+        )
+        results["options_positioning"] = FetchResult(
+            name="options_positioning",
+            status=options_result.get("status", "failed"),
+            data=options_result,
+            error=options_result.get("error"),
+            last_success_at=_aest_iso(),
+            value=options_result.get("note"),
+        )
+
         raw = RawMarketData(
             asx_cash=results["asx_cash"].data,
             spi_futures=results["spi_futures"].data,
@@ -1393,6 +1470,8 @@ class DataFetcher:
             asian_session=results["asian_session"].data,
             tradingview=tv_result.get("data"),
             alpha_vantage=results["alpha_vantage"].data,
+            news_sentiment=news_result,
+            options_positioning=options_result,
             source_status=[
                 {
                     "name": r.name,
