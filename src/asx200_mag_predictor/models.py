@@ -159,6 +159,11 @@ class FeatureVector(BaseModel):
     tv_china_steel_property_return_pct: float | None = None
     tv_china_steel_property_components: dict[str, float] = Field(default_factory=dict)
 
+    # Regime detection (computed by the scoring engine, not a raw feed)
+    regime: str | None = None
+    regime_numeric: float | None = None
+    regime_confidence: float | None = None
+
     # Daily rates overlay (historical Australian Shares / International Shares, etc.)
     daily_rates: dict[str, float] | None = None
 
@@ -245,6 +250,10 @@ class Prediction(BaseModel):
     high_conviction_bucket: str | None = None
     high_conviction_historical_accuracy: float | None = None
     high_conviction_reason: str | None = None
+
+    # Detected macro/sector regime
+    regime: str = "contested"
+    regime_confidence: float | None = None
 
 
 class Actual(BaseModel):

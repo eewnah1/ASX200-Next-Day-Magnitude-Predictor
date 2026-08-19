@@ -118,6 +118,9 @@ ML_BASE_FEATURES = [
     "au_10y_yield_change_bps",
     "rba_rates_score",
     "tv_china_steel_property_return_pct",
+    # Regime-aware features (computed by the scoring engine)
+    "regime_numeric",
+    "regime_confidence",
 ]
 
 ML_INTERACTIONS = [
@@ -128,6 +131,8 @@ ML_INTERACTIONS = [
     ("av_spy_change_pct", "av_aud_usd_change_pct"),
     ("rba_cash_rate_change_bps", "financials_minus_materials_weighted_pct"),
     ("tv_china_steel_property_return_pct", "iron_ore_change_pct"),
+    ("regime_numeric", "financials_minus_materials_weighted_pct"),
+    ("regime_numeric", "iron_ore_change_pct"),
 ]
 
 
@@ -771,6 +776,11 @@ class HistoricalFeatureBuilder:
             d["rba_rates_score"] = 0.0
         if d.get("tv_china_steel_property_return_pct") is None:
             d["tv_china_steel_property_return_pct"] = d.get("china_steel_property_return_pct")
+
+        # Backfill regime features for historical rows where the engine did not compute them.
+        if d.get("regime_numeric") is None:
+            d["regime_numeric"] = 0.0
+            d["regime_confidence"] = 0.0
 
         row: dict[str, Any] = {k: d.get(k) for k in ML_BASE_FEATURES}
         row["date"] = t

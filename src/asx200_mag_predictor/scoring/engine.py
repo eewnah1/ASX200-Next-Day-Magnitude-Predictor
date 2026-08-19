@@ -74,6 +74,158 @@ PRIMARY_WEIGHTS: dict[str, float] = {
     "rba_rates": 0.04,
 }
 
+# Regime-aware weight modifiers. Each dict is applied to PRIMARY_WEIGHTS, then the
+# resulting vector is re-normalised to sum to 1.0. Factors not listed keep a 1.0x
+# multiplier. This keeps the primary model interpretable while letting the engine
+# emphasise the signals most relevant to the detected macro/sector regime.
+REGIME_WEIGHT_MODS: dict[str, dict[str, float]] = {
+    "contested": {
+        "financials_vs_materials": 0.7,
+        "iron_ore": 0.7,
+        "china_steel_property": 0.7,
+        "us_equity_lead": 0.8,
+        "rba_rates": 0.8,
+        "tv_financials_vs_materials": 0.7,
+        "tv_commodity": 0.7,
+        "tv_asian": 0.8,
+        "gold_silver": 0.8,
+        "heavyweight_idio": 0.9,
+        "housing_credit": 0.9,
+        "tv_heavyweight": 0.9,
+        "alpha_vantage_global_lead": 0.8,
+        "rsi": 1.2,
+        "ath_distance": 1.2,
+        "momentum_exhaustion": 1.3,
+        "a_vix": 1.3,
+    },
+    "financials_led": {
+        "financials_vs_materials": 1.4,
+        "rba_rates": 1.3,
+        "housing_credit": 1.2,
+        "us_equity_lead": 1.2,
+        "tv_financials_vs_materials": 1.3,
+        "heavyweight_idio": 1.1,
+        "tv_heavyweight": 1.1,
+        "tv_xjo_trend": 1.1,
+        "iron_ore": 0.6,
+        "china_steel_property": 0.6,
+        "tv_commodity": 0.7,
+        "gold_silver": 0.8,
+        "tv_asian": 0.9,
+    },
+    "materials_led": {
+        "iron_ore": 1.4,
+        "china_steel_property": 1.3,
+        "tv_commodity": 1.2,
+        "tv_asian": 1.1,
+        "heavyweight_idio": 1.1,
+        "tv_heavyweight": 1.1,
+        "spi": 1.1,
+        "financials_vs_materials": 0.6,
+        "rba_rates": 0.8,
+        "housing_credit": 0.8,
+        "tv_financials_vs_materials": 0.6,
+    },
+    "dual_engine": {
+        "us_equity_lead": 1.2,
+        "tv_asian": 1.2,
+        "tv_xjo_trend": 1.2,
+        "heavyweight_idio": 1.2,
+        "tv_heavyweight": 1.2,
+        "rba_rates": 1.1,
+        "housing_credit": 1.1,
+        "iron_ore": 1.1,
+        "china_steel_property": 1.1,
+        "alpha_vantage_global_lead": 1.1,
+        "rsi": 0.8,
+        "ath_distance": 0.8,
+        "momentum_exhaustion": 0.8,
+        "a_vix": 0.8,
+    },
+}
+
+
+def _regime_aware_weights(regime: str) -> dict[str, float]:
+    """Return a normalised copy of PRIMARY_WEIGHTS adjusted for the regime."""
+    mods = REGIME_WEIGHT_MODS.get(regime, {})
+    adjusted = {k: v * mods.get(k, 1.0) for k, v in PRIMARY_WEIGHTS.items()}
+    total = sum(adjusted.values())
+    if total > 0:
+        adjusted = {k: v / total for k, v in adjusted.items()}
+    return adjusted
+
+
+def _regime_gate(regime: str) -> float:
+    """Primary-model high-conviction threshold by regime."""
+    return {"contested": 2.5, "dual_engine": 2.1, "financials_led": 2.3, "materials_led": 2.3}.get(
+        regime, 2.3
+    )
+
+
+def _detect_regime(fv: FeatureVector) -> tuple[str, float, float, float, float]:
+    """Detect macro/sector regime from Financials vs Materials and China/iron ore signals.
+
+    Returns (regime_label, regime_numeric_code, confidence, financials_index, materials_index).
+    No look-ahead: all inputs are point-in-time feature-vector fields.
+    """
+    # Financials engine: banks/housing/AUD rates vs global risk appetite.
+    fvm_score = score_financials_vs_materials(fv.financials_minus_materials_weighted_pct) or 0.0
+    rba = fv.rba_rates_score or 0.0
+    housing = score_housing_credit_pulse(fv.housing_credit_pulse_score) or 0.0
+    us_values = [
+        v
+        for v in [
+            fv.sp500_change_pct,
+            fv.nasdaq_change_pct,
+            fv.dow_change_pct,
+            fv.us_futures_change_pct,
+        ]
+        if v is not None
+    ]
+    us_avg = sum(us_values) / len(us_values) if us_values else 0.0
+    us_score = _clamp(us_avg / 1.0, -3.0, 3.0)
+    financials_index = fvm_score + 0.5 * rba + 0.4 * housing + 0.3 * us_score
+
+    # Materials engine: iron ore, China pulse, industrial commodities vs gold, copper.
+    iron = fv.iron_ore_change_pct
+    iron_score = _clamp((iron or 0.0) / 1.2, -3.0, 3.0)
+    china_score = fv.china_steel_property_score or 0.0
+    tv_china_raw = fv.tv_china_steel_property_return_pct
+    if tv_china_raw is not None:
+        tv_china_score = score_china_steel_property(tv_china_raw) or 0.0
+    else:
+        tv_china_score = china_score
+    comm_score = _clamp((fv.tv_commodity_vs_gold_change_pct or 0.0) / 1.0, -3.0, 3.0)
+    copper_score = _clamp((fv.copper_change_pct or 0.0) / 0.8, -3.0, 3.0)
+    materials_index = (
+        0.35 * iron_score
+        + 0.30 * china_score
+        + 0.20 * tv_china_score
+        + 0.10 * comm_score
+        + 0.05 * copper_score
+    )
+
+    diff = financials_index - materials_index
+    if abs(financials_index) < 0.4 and abs(materials_index) < 0.4:
+        regime = "contested"
+    elif financials_index > 0.8 and materials_index > 0.8:
+        regime = "dual_engine"
+    elif diff > 0.6:
+        regime = "financials_led"
+    elif diff < -0.6:
+        regime = "materials_led"
+    else:
+        regime = "contested"
+
+    confidence = _clamp(
+        max(abs(financials_index), abs(materials_index), abs(diff) / 2.0) / 3.0,
+        0.0,
+        1.0,
+    )
+    numeric = {"financials_led": -1.0, "materials_led": 1.0, "dual_engine": 2.0, "contested": 0.0}
+    return regime, numeric[regime], confidence, financials_index, materials_index
+
+
 # Baseline magnitude distributions indexed by volatility regime (0=calm ... 4=extreme).
 # Each vector is [low, mid, high] for *positive* moves and sums to 1.
 # The negative bucket is derived from a separate direction model.
@@ -248,7 +400,14 @@ class ScoringEngine:
         probs, factor_breakdown = self._legacy_probabilities(fv)
 
         # Model 1: primary high-conviction large-move classifier (rule + ML hybrid).
-        primary_contributions, primary_score, primary_bucket_rule = self._primary_model(fv, flags)
+        (
+            primary_contributions,
+            primary_score,
+            primary_bucket_rule,
+            regime,
+            regime_confidence,
+            regime_note,
+        ) = self._primary_model(fv, flags)
         ml_primary_probs = self.hybrid_ml.primary_probs(fv)
         primary_bucket, primary_fallback = self._hybrid_primary_bucket(
             primary_score, ml_primary_probs, fv, primary_bucket_rule
@@ -335,6 +494,7 @@ class ScoringEngine:
         if notes_for_hc:
             notes.append(notes_for_hc)
         notes.append(f"Active model: {model}; primary bucket: {primary_bucket}")
+        notes.append(f"Active regime: {regime} ({regime_note})")
         if ml_available and ml_primary_probs:
             notes.append(
                 f"ML primary probabilities: "
@@ -408,6 +568,8 @@ class ScoringEngine:
             recommendation_source=recommendation_source,
             recommendation_confidence=round(confidence, 4),
             in_position=in_position,
+            regime=regime,
+            regime_confidence=round(regime_confidence, 4),
             **hc_kwargs,
         )
 
@@ -475,9 +637,14 @@ class ScoringEngine:
 
     def _primary_model(
         self, fv: FeatureVector, flags: DataQualityFlags | None = None
-    ) -> tuple[list[FactorContribution], float, str]:
-        """Model 1: high-conviction large-move classifier with exact weights."""
+    ) -> tuple[list[FactorContribution], float, str, str, float, str]:
+        """Model 1: high-conviction large-move classifier with exact, regime-aware weights."""
         flags = flags or DataQualityFlags()
+        regime, regime_numeric, regime_confidence, fi, mi = _detect_regime(fv)
+        fv.regime = regime
+        fv.regime_numeric = regime_numeric
+        fv.regime_confidence = regime_confidence
+        active_weights = _regime_aware_weights(regime)
         contributions: list[FactorContribution] = []
         total = 0.0
 
@@ -520,7 +687,7 @@ class ScoringEngine:
             fvm_raw,
             "%",
             fvm_score,
-            PRIMARY_WEIGHTS["financials_vs_materials"],
+            active_weights["financials_vs_materials"],
             fvm_note,
         )
 
@@ -532,7 +699,7 @@ class ScoringEngine:
             iron,
             "%",
             iron_score,
-            PRIMARY_WEIGHTS["iron_ore"],
+            active_weights["iron_ore"],
             f"Iron ore {_fmt_pct(iron)}; positive supports materials, negative weighs",
         )
 
@@ -544,7 +711,7 @@ class ScoringEngine:
             rsi,
             "index",
             rsi_score_val,
-            PRIMARY_WEIGHTS["rsi"],
+            active_weights["rsi"],
             f"RSI {rsi:.1f}" if rsi is not None else "No RSI data",
         )
 
@@ -556,7 +723,7 @@ class ScoringEngine:
             ath,
             "%",
             ath_score_val,
-            PRIMARY_WEIGHTS["ath_distance"],
+            active_weights["ath_distance"],
             (
                 f"ATH distance {_fmt_pct(ath)}; 20d high {_fmt_pct(fv.high_20d_distance_pct)}, "
                 f"50d high {_fmt_pct(fv.high_50d_distance_pct)}"
@@ -573,7 +740,7 @@ class ScoringEngine:
             hc,
             "0-10",
             hc_score_val,
-            PRIMARY_WEIGHTS["housing_credit"],
+            active_weights["housing_credit"],
             (f"pulse {hc:.1f}/10" if hc is not None else "No housing/credit proxy data"),
         )
 
@@ -599,7 +766,7 @@ class ScoringEngine:
             hw,
             "%",
             hw_score_val,
-            PRIMARY_WEIGHTS["heavyweight_idio"],
+            active_weights["heavyweight_idio"],
             hw_note,
         )
 
@@ -619,7 +786,7 @@ class ScoringEngine:
             us_avg,
             "%",
             us_score,
-            PRIMARY_WEIGHTS["us_equity_lead"],
+            active_weights["us_equity_lead"],
             us_note or "No US equity data",
         )
 
@@ -636,7 +803,7 @@ class ScoringEngine:
             mom,
             "%",
             mom_score_val,
-            PRIMARY_WEIGHTS["momentum_exhaustion"],
+            active_weights["momentum_exhaustion"],
             (
                 f"5d return {_fmt_pct(mom)}"
                 + (
@@ -657,7 +824,7 @@ class ScoringEngine:
             china,
             "%",
             china_score_val,
-            PRIMARY_WEIGHTS["china_steel_property"],
+            active_weights["china_steel_property"],
             _china_note(fv, china),
         )
 
@@ -677,7 +844,7 @@ class ScoringEngine:
             pm_avg,
             "%",
             pm_score,
-            PRIMARY_WEIGHTS["gold_silver"],
+            active_weights["gold_silver"],
             pm_note,
         )
 
@@ -703,7 +870,7 @@ class ScoringEngine:
             spi_combined,
             "%",
             spi_score,
-            PRIMARY_WEIGHTS["spi"],
+            active_weights["spi"],
             spi_note,
         )
 
@@ -720,7 +887,7 @@ class ScoringEngine:
             a_vix,
             "index",
             vix_score,
-            PRIMARY_WEIGHTS["a_vix"],
+            active_weights["a_vix"],
             f"A-VIX {a_vix or 'n/a'}; regime {vol_regime}",
         )
 
@@ -732,7 +899,7 @@ class ScoringEngine:
                 None,
                 "score",
                 0.0,
-                PRIMARY_WEIGHTS["tv_xjo_trend"],
+                active_weights["tv_xjo_trend"],
                 tv_note,
             )
             add(
@@ -740,7 +907,7 @@ class ScoringEngine:
                 None,
                 "%",
                 0.0,
-                PRIMARY_WEIGHTS["tv_financials_vs_materials"],
+                active_weights["tv_financials_vs_materials"],
                 tv_note,
             )
             add(
@@ -748,7 +915,7 @@ class ScoringEngine:
                 None,
                 "score",
                 0.0,
-                PRIMARY_WEIGHTS["tv_heavyweight"],
+                active_weights["tv_heavyweight"],
                 tv_note,
             )
             add(
@@ -756,7 +923,7 @@ class ScoringEngine:
                 None,
                 "%",
                 0.0,
-                PRIMARY_WEIGHTS["tv_asian"],
+                active_weights["tv_asian"],
                 tv_note,
             )
             add(
@@ -764,7 +931,7 @@ class ScoringEngine:
                 None,
                 "%",
                 0.0,
-                PRIMARY_WEIGHTS["tv_commodity"],
+                active_weights["tv_commodity"],
                 tv_note,
             )
         else:
@@ -777,7 +944,7 @@ class ScoringEngine:
                 tv_trend,
                 "score",
                 tv_trend_score,
-                PRIMARY_WEIGHTS["tv_xjo_trend"],
+                active_weights["tv_xjo_trend"],
                 (
                     f"daily {tv_daily}, weekly {tv_weekly}, decision={fv.tv_xjo_decision}"
                     if tv_trend is not None
@@ -792,7 +959,7 @@ class ScoringEngine:
                 tv_fvm,
                 "%",
                 tv_fvm_score,
-                PRIMARY_WEIGHTS["tv_financials_vs_materials"],
+                active_weights["tv_financials_vs_materials"],
                 f"TV Financials - Materials {_fmt_pct(tv_fvm)}"
                 if tv_fvm is not None
                 else "No TV sector data",
@@ -805,7 +972,7 @@ class ScoringEngine:
                 tv_hw,
                 "score",
                 tv_hw_score,
-                PRIMARY_WEIGHTS["tv_heavyweight"],
+                active_weights["tv_heavyweight"],
                 f"CBA/BHP/RIO/FMG/WDS avg net score={tv_hw:.2f}"
                 if tv_hw is not None
                 else "No TV heavyweight data",
@@ -818,7 +985,7 @@ class ScoringEngine:
                 tv_asian,
                 "%",
                 tv_asian_score,
-                PRIMARY_WEIGHTS["tv_asian"],
+                active_weights["tv_asian"],
                 f"Nikkei/Hang Seng/STI/KOSPI avg {_fmt_pct(tv_asian)}"
                 if tv_asian is not None
                 else "No TV Asian data",
@@ -831,7 +998,7 @@ class ScoringEngine:
                 tv_comm,
                 "%",
                 tv_comm_score,
-                PRIMARY_WEIGHTS["tv_commodity"],
+                active_weights["tv_commodity"],
                 f"industrial basket vs gold {_fmt_pct(tv_comm)}"
                 if tv_comm is not None
                 else "No TV commodity data",
@@ -884,7 +1051,7 @@ class ScoringEngine:
             av_raw,
             "%",
             av_score,
-            PRIMARY_WEIGHTS["alpha_vantage_global_lead"],
+            active_weights["alpha_vantage_global_lead"],
             av_note,
         )
 
@@ -914,18 +1081,34 @@ class ScoringEngine:
             rba_raw,
             "bps",
             rba_score,
-            PRIMARY_WEIGHTS["rba_rates"],
+            active_weights["rba_rates"],
             rba_note,
         )
 
-        # Strict high-conviction gating.
+        # Active regime summary factor (weight=0 so it does not move the score but is
+        # visible in the primary factor table for interpretability).
+        contributions.append(
+            FactorContribution(
+                name="Active Regime",
+                raw_value=round(regime_confidence, 4),
+                raw_unit="score",
+                direction="neutral",
+                weight=0.0,
+                score=0.0,
+                note=f"regime={regime}; financials_index={fi:.2f}; materials_index={mi:.2f}",
+                group="Primary",
+            )
+        )
+
+        # Strict high-conviction gating, with regime-aware thresholds.
+        gate = _regime_gate(regime)
         rsi_for_gate = _clamp(fv.rsi_14, 0.0, 100.0, 50.0)
         ath_for_gate = _clamp(fv.ath_distance_pct, -50.0, 50.0, -5.0)
         iron_for_gate = fv.iron_ore_change_pct
-        if total >= 2.3 and rsi_for_gate <= 65 and ath_for_gate <= -1.0:
+        if total >= gate and rsi_for_gate <= 65 and ath_for_gate <= -1.0:
             primary_bucket = "Large Up"
         elif (
-            total <= -2.3
+            total <= -gate
             and rsi_for_gate >= 68
             and (ath_for_gate >= -1.0 or (iron_for_gate is not None and iron_for_gate <= -0.6))
         ):
@@ -933,7 +1116,17 @@ class ScoringEngine:
         else:
             primary_bucket = "Neutral"
 
-        return contributions, round(total, 4), primary_bucket
+        return (
+            contributions,
+            round(total, 4),
+            primary_bucket,
+            regime,
+            regime_confidence,
+            (
+                f"financials_index={fi:.2f}; materials_index={mi:.2f}; "
+                f"confidence={regime_confidence:.2f}"
+            ),
+        )
 
     def _secondary_model(
         self, fv: FeatureVector, primary_bucket: str, flags: DataQualityFlags | None = None
