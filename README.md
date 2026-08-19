@@ -255,6 +255,18 @@ Example output (2010–present, rule-score threshold 0.6, no ML):
 | Buy & hold annualised | ~4.97% |
 | Buy & hold up days | 53.6% |
 
+Latest run (2024-11-11 to 2026-08-18, `engine` strategy with ML, after Item 2 TradingView integration):
+
+| Metric | Value |
+|--------|-------|
+| Signal days | 12 (2.7% of all days) |
+| Hit rate | 100.0% |
+| Avg return on signal days | +0.440% |
+| Simple total return (signals) | +5.29% |
+| Signal Sharpe | 2.59 |
+| Buy & hold annualised | +5.83% |
+| Buy & hold up days | 49.9% |
+
 The original `notebooks/backtest.py` quick script is still available:
 
 ```bash
