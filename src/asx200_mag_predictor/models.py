@@ -35,6 +35,7 @@ class DataQualityFlags(BaseModel):
     housing_credit: str = "ok"
     china_steel_property: str = "ok"
     heavyweight_idio: str = "ok"
+    tradingview: str = "ok"
 
 
 class FeatureVector(BaseModel):
@@ -120,6 +121,19 @@ class FeatureVector(BaseModel):
     bollinger_position: float | None = None
     bollinger_score: float | None = None
     profit_taking_combo_score: float | None = None
+
+    # TradingView MCP enrichment
+    tv_xjo_daily_score: float | None = None
+    tv_xjo_weekly_score: float | None = None
+    tv_xjo_trend_score: float | None = None
+    tv_xjo_decision: str | None = None
+    tv_financials_vs_materials_score: float | None = None
+    tv_financials_minus_materials_pct: float | None = None
+    tv_heavyweight_avg_score: float | None = None
+    tv_asian_session_change_pct: float | None = None
+    tv_commodity_basket_change_pct: float | None = None
+    tv_commodity_basket_ex_gold_change_pct: float | None = None
+    tv_commodity_vs_gold_change_pct: float | None = None
 
     # Daily rates overlay (historical Australian Shares / International Shares, etc.)
     daily_rates: dict[str, float] | None = None

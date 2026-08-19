@@ -77,14 +77,18 @@ def atila_market_snapshot() -> dict[str, Any]:
         return {"source": "atilaahmettaner/tradingview-mcp", "error": str(exc)}
 
 
-def atila_symbol_analysis(symbol: str, exchange: str) -> dict[str, Any]:
-    """Multi-agent technical/sentiment/risk analysis for a symbol."""
+def atila_symbol_analysis(
+    symbol: str, exchange: str, interval: str = "1D"
+) -> dict[str, Any]:
+    """Multi-agent technical/sentiment/risk analysis for a symbol/timeframe."""
     try:
         from tradingview_mcp.core.services.multi_agent_service import (
             run_multi_agent_analysis,
         )
 
-        result = cast(dict[str, Any], run_multi_agent_analysis(symbol, exchange, "1D"))
+        result = cast(
+            dict[str, Any], run_multi_agent_analysis(symbol, exchange, interval)
+        )
         result["source"] = "atilaahmettaner/tradingview-mcp"
         return result
     except Exception as exc:  # noqa: BLE001

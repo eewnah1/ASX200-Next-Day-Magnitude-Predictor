@@ -17,6 +17,7 @@ import requests
 import yfinance as yf
 
 from asx200_mag_predictor.config import Settings, get_settings
+from asx200_mag_predictor.data.tradingview_fetcher import TradingViewFetcher
 from asx200_mag_predictor.logging_config import get_logger
 from asx200_mag_predictor.scoring.features import RawMarketData
 from asx200_mag_predictor.timezone import now_sydney, previous_asx_session_close, to_sydney
@@ -1115,6 +1116,7 @@ class DataFetcher:
         self.ff_calendar = ForexFactoryCalendar()
         self.news_calendar = NewsAPICalendar(settings)
         self.marketaux_calendar = MarketAuxCalendar(settings)
+        self.tv = TradingViewFetcher()
 
     def fetch_all(self) -> RawMarketData:
         """Fetch every data source, cache the snapshot, and return raw data."""
@@ -1132,6 +1134,16 @@ class DataFetcher:
         results["china_pulse"] = self.yf.china_steel_property()
         results["heavyweight_idio"] = self.yf.heavyweight_idiosyncratic()
         results["volume"] = self.yf.intraday_asx()
+
+        # TradingView MCP enrichment (optional; never blocks core yfinance pipeline)
+        tv_result = self.tv.fetch()
+        results["tradingview"] = FetchResult(
+            name="tradingview",
+            status="ok" if tv_result.get("status") == "ok" else "degraded",
+            data=tv_result.get("data"),
+            error="; ".join(tv_result.get("errors", [])) or None,
+            last_success_at=_aest_iso(),
+        )
 
         cal = self.ff_calendar.fetch()
         if cal.status != "ok":
@@ -1157,6 +1169,7 @@ class DataFetcher:
             heavyweight_idio=results["heavyweight_idio"].data,
             calendar=results["calendar"].data,
             volume=results["volume"].data,
+            tradingview=tv_result.get("data"),
             source_status=[
                 {
                     "name": r.name,

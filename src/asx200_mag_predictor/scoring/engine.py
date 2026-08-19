@@ -50,19 +50,26 @@ SECONDARY_BUCKETS = ["Mild Bearish Bias", "True Neutral", "Mild Bullish Bias"]
 
 # Exact Model 1 weights (sum to 1.00). Each weight is multiplied by a signed
 # score in the [-3.0, +3.0] range so the maximum possible primary score is ±3.0.
+# Weights reduced slightly to make room for TradingView MCP-derived factors.
 PRIMARY_WEIGHTS: dict[str, float] = {
-    "rsi": 0.12,
-    "ath_distance": 0.11,
-    "financials_vs_materials": 0.12,
-    "iron_ore": 0.10,
-    "momentum_exhaustion": 0.10,
-    "housing_credit": 0.08,
-    "heavyweight_idio": 0.08,
-    "us_equity_lead": 0.08,
-    "china_steel_property": 0.07,
-    "gold_silver": 0.05,
-    "spi": 0.05,
-    "a_vix": 0.04,
+    "rsi": 0.10,
+    "ath_distance": 0.09,
+    "financials_vs_materials": 0.10,
+    "iron_ore": 0.08,
+    "momentum_exhaustion": 0.08,
+    "housing_credit": 0.07,
+    "heavyweight_idio": 0.07,
+    "us_equity_lead": 0.07,
+    "china_steel_property": 0.06,
+    "gold_silver": 0.04,
+    "spi": 0.03,
+    "a_vix": 0.03,
+    # TradingView MCP enrichment
+    "tv_xjo_trend": 0.05,
+    "tv_financials_vs_materials": 0.04,
+    "tv_heavyweight": 0.03,
+    "tv_asian": 0.03,
+    "tv_commodity": 0.03,
 }
 
 # Baseline magnitude distributions indexed by volatility regime (0=calm ... 4=extreme).
@@ -167,6 +174,24 @@ class ScoringEngine:
                     "spi_basis_pct": None,
                     "spi_momentum_pct": None,
                     "spi_short_term_momentum_pct": None,
+                }
+            )
+
+        # TradingView MCP enrichment is optional; zero the features if degraded so
+        # stale or partial snapshots cannot bias the legacy/ML models.
+        if flags.tradingview not in ("ok", None):
+            fv = fv.model_copy(
+                update={
+                    "tv_xjo_daily_score": None,
+                    "tv_xjo_weekly_score": None,
+                    "tv_xjo_trend_score": None,
+                    "tv_financials_vs_materials_score": None,
+                    "tv_financials_minus_materials_pct": None,
+                    "tv_heavyweight_avg_score": None,
+                    "tv_asian_session_change_pct": None,
+                    "tv_commodity_basket_change_pct": None,
+                    "tv_commodity_basket_ex_gold_change_pct": None,
+                    "tv_commodity_vs_gold_change_pct": None,
                 }
             )
 
@@ -649,6 +674,119 @@ class ScoringEngine:
             PRIMARY_WEIGHTS["a_vix"],
             f"A-VIX {a_vix or 'n/a'}; regime {vol_regime}",
         )
+
+        # 13-17. TradingView MCP enrichment (optional; zeroed if source degraded)
+        if flags.tradingview not in ("ok", None):
+            tv_note = f"TradingView source degraded ({flags.tradingview}) — factors zeroed"
+            add(
+                "TV XJO multi-timeframe trend",
+                None,
+                "score",
+                0.0,
+                PRIMARY_WEIGHTS["tv_xjo_trend"],
+                tv_note,
+            )
+            add(
+                "TV Financials vs Materials",
+                None,
+                "%",
+                0.0,
+                PRIMARY_WEIGHTS["tv_financials_vs_materials"],
+                tv_note,
+            )
+            add(
+                "TV Heavyweight consensus",
+                None,
+                "score",
+                0.0,
+                PRIMARY_WEIGHTS["tv_heavyweight"],
+                tv_note,
+            )
+            add(
+                "TV Asian session lead",
+                None,
+                "%",
+                0.0,
+                PRIMARY_WEIGHTS["tv_asian"],
+                tv_note,
+            )
+            add(
+                "TV Commodity basket vs gold",
+                None,
+                "%",
+                0.0,
+                PRIMARY_WEIGHTS["tv_commodity"],
+                tv_note,
+            )
+        else:
+            tv_trend = fv.tv_xjo_trend_score
+            tv_trend_score = _clamp((tv_trend or 0.0) / 2.0, -3.0, 3.0)
+            tv_daily = fv.tv_xjo_daily_score
+            tv_weekly = fv.tv_xjo_weekly_score
+            add(
+                "TV XJO multi-timeframe trend",
+                tv_trend,
+                "score",
+                tv_trend_score,
+                PRIMARY_WEIGHTS["tv_xjo_trend"],
+                (
+                    f"daily {tv_daily}, weekly {tv_weekly}, decision={fv.tv_xjo_decision}"
+                    if tv_trend is not None
+                    else "No TradingView XJO consensus"
+                ),
+            )
+
+            tv_fvm = fv.tv_financials_minus_materials_pct
+            tv_fvm_score = _clamp(fv.tv_financials_vs_materials_score or 0.0, -3.0, 3.0)
+            add(
+                "TV Financials vs Materials",
+                tv_fvm,
+                "%",
+                tv_fvm_score,
+                PRIMARY_WEIGHTS["tv_financials_vs_materials"],
+                f"TV Financials - Materials {_fmt_pct(tv_fvm)}"
+                if tv_fvm is not None
+                else "No TV sector data",
+            )
+
+            tv_hw = fv.tv_heavyweight_avg_score
+            tv_hw_score = _clamp((tv_hw or 0.0) / 2.0, -3.0, 3.0)
+            add(
+                "TV Heavyweight consensus",
+                tv_hw,
+                "score",
+                tv_hw_score,
+                PRIMARY_WEIGHTS["tv_heavyweight"],
+                f"CBA/BHP/RIO/FMG/WDS avg net score={tv_hw:.2f}"
+                if tv_hw is not None
+                else "No TV heavyweight data",
+            )
+
+            tv_asian = fv.tv_asian_session_change_pct
+            tv_asian_score = _clamp((tv_asian or 0.0) / 0.5, -3.0, 3.0)
+            add(
+                "TV Asian session lead",
+                tv_asian,
+                "%",
+                tv_asian_score,
+                PRIMARY_WEIGHTS["tv_asian"],
+                f"Nikkei/Hang Seng/STI/KOSPI avg {_fmt_pct(tv_asian)}"
+                if tv_asian is not None
+                else "No TV Asian data",
+            )
+
+            tv_comm = fv.tv_commodity_vs_gold_change_pct
+            tv_comm_score = _clamp((tv_comm or 0.0) / 0.5, -3.0, 3.0)
+            add(
+                "TV Commodity basket vs gold",
+                tv_comm,
+                "%",
+                tv_comm_score,
+                PRIMARY_WEIGHTS["tv_commodity"],
+                f"industrial basket vs gold {_fmt_pct(tv_comm)}"
+                if tv_comm is not None
+                else "No TV commodity data",
+            )
 
         # Strict high-conviction gating.
         rsi_for_gate = _clamp(fv.rsi_14, 0.0, 100.0, 50.0)

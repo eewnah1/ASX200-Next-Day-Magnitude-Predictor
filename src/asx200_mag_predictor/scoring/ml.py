@@ -93,12 +93,31 @@ ML_BASE_FEATURES = [
     "bollinger_position",
     "bollinger_score",
     "profit_taking_combo_score",
+    # TradingView MCP enrichment
+    "tv_xjo_daily_score",
+    "tv_xjo_weekly_score",
+    "tv_xjo_trend_score",
+    "tv_financials_vs_materials_score",
+    "tv_financials_minus_materials_pct",
+    "tv_heavyweight_avg_score",
+    "tv_asian_session_change_pct",
+    "tv_commodity_basket_change_pct",
+    "tv_commodity_basket_ex_gold_change_pct",
+    "tv_commodity_vs_gold_change_pct",
 ]
 
 ML_INTERACTIONS = [
     ("rsi_14", "ath_distance_pct"),
     ("iron_ore_change_pct", "financials_minus_materials_weighted_pct"),
+    ("tv_xjo_trend_score", "tv_asian_session_change_pct"),
+    ("tv_heavyweight_avg_score", "tv_commodity_vs_gold_change_pct"),
 ]
+
+
+def _clamp(value: float | None, low: float, high: float, default: float = 0.0) -> float:
+    if value is None or math.isnan(value):
+        return default
+    return max(low, min(high, value))
 
 
 def _safe_float(value: Any) -> float:
@@ -674,6 +693,41 @@ class HistoricalFeatureBuilder:
 
     def _fv_to_row(self, fv: FeatureVector, t: datetime, next_return: float) -> dict[str, Any]:
         d = fv.model_dump()
+
+        # Backfill TradingView MCP-derived features with yfinance proxies so the
+        # ML model can learn relationships before live MCP data is available.
+        if d.get("tv_xjo_trend_score") is None:
+            xjo_proxy = _clamp(
+                (d.get("rsi_score") or 0.0)
+                + (d.get("bollinger_score") or 0.0)
+                + (d.get("momentum_exhaustion_score") or 0.0),
+                -3.0,
+                3.0,
+            )
+            d["tv_xjo_daily_score"] = xjo_proxy
+            d["tv_xjo_weekly_score"] = xjo_proxy
+            d["tv_xjo_trend_score"] = xjo_proxy
+        if d.get("tv_financials_vs_materials_score") is None:
+            d["tv_financials_vs_materials_score"] = d.get("financials_vs_materials_score")
+            d["tv_financials_minus_materials_pct"] = d.get(
+                "financials_minus_materials_weighted_pct"
+            )
+        if d.get("tv_heavyweight_avg_score") is None:
+            d["tv_heavyweight_avg_score"] = d.get("heavyweight_idio_score")
+        if d.get("tv_commodity_basket_change_pct") is None:
+            basket = [
+                d.get(k)
+                for k in ["iron_ore_change_pct", "copper_change_pct", "oil_change_pct"]
+            ]
+            basket_values = [v for v in basket if v is not None]
+            if basket_values:
+                basket_avg = sum(basket_values) / len(basket_values)
+                d["tv_commodity_basket_change_pct"] = basket_avg
+                d["tv_commodity_basket_ex_gold_change_pct"] = basket_avg
+                d["tv_commodity_vs_gold_change_pct"] = basket_avg - (
+                    d.get("gold_change_pct") or 0.0
+                )
+
         row: dict[str, Any] = {k: d.get(k) for k in ML_BASE_FEATURES}
         row["date"] = t
         row["next_return_pct"] = next_return

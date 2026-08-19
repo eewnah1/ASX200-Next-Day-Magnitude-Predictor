@@ -36,6 +36,17 @@ def _clamp(value: float | None, low: float, high: float, default: float = 0.0) -
     return max(low, min(high, value))
 
 
+def _score_tv_sector_spread(value: float | None) -> float:
+    """Map Financials - Materials daily % change into a directional score.
+
+    Strong financials outperformance is bullish for the index; materials
+    outperformance is mixed because resource profits are often priced in USD.
+    """
+    if value is None or math.isnan(value):
+        return 0.0
+    return _clamp(value * 0.5, -1.5, 1.5)
+
+
 def _atr(
     closes: list[float], highs: list[float], lows: list[float], period: int = 5
 ) -> float | None:
@@ -365,6 +376,7 @@ class RawMarketData:
     heavyweight_idio: dict[str, Any] | None = None
     calendar: dict[str, Any] | None = None
     volume: dict[str, Any] | None = None
+    tradingview: dict[str, Any] | None = None
     source_status: list[dict[str, Any]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
@@ -634,6 +646,54 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
     feats["bollinger_position"] = bollinger_position
     feats["bollinger_score"] = bollinger_score
     feats["profit_taking_combo_score"] = profit_taking_combo
+
+    # TradingView MCP enrichment (live real-time multi-timeframe consensus + market snapshots)
+    tv = raw.tradingview or {}
+    tv_data = tv if not isinstance(tv, dict) or "data" not in tv else tv.get("data", {})
+    xjo_daily = tv_data.get("xjo_daily") or {}
+    xjo_weekly = tv_data.get("xjo_weekly") or {}
+    feats["tv_xjo_daily_score"] = xjo_daily.get("net_score")
+    feats["tv_xjo_weekly_score"] = xjo_weekly.get("net_score")
+    daily_score = xjo_daily.get("net_score")
+    weekly_score = xjo_weekly.get("net_score")
+    if daily_score is not None and weekly_score is not None:
+        feats["tv_xjo_trend_score"] = _clamp((daily_score + weekly_score) / 2.0, -3.0, 3.0)
+    elif daily_score is not None:
+        feats["tv_xjo_trend_score"] = _clamp(daily_score, -3.0, 3.0)
+    elif weekly_score is not None:
+        feats["tv_xjo_trend_score"] = _clamp(weekly_score, -3.0, 3.0)
+    else:
+        feats["tv_xjo_trend_score"] = None
+    feats["tv_xjo_decision"] = (
+        xjo_daily.get("decision") if isinstance(xjo_daily, dict) else None
+    )
+
+    sectors = tv_data.get("sectors") or {}
+    feats["tv_financials_minus_materials_pct"] = sectors.get(
+        "financials_minus_materials_pct"
+    )
+    feats["tv_financials_vs_materials_score"] = _score_tv_sector_spread(
+        sectors.get("financials_minus_materials_pct")
+    )
+
+    hw = tv_data.get("heavyweights") or {}
+    feats["tv_heavyweight_avg_score"] = hw.get("avg_score")
+
+    asian = tv_data.get("asian") or {}
+    feats["tv_asian_session_change_pct"] = asian.get("avg_change_pct")
+
+    comm = tv_data.get("commodities") or {}
+    feats["tv_commodity_basket_change_pct"] = comm.get("basket_change_pct")
+    feats["tv_commodity_basket_ex_gold_change_pct"] = comm.get(
+        "basket_ex_gold_change_pct"
+    )
+    feats["tv_commodity_vs_gold_change_pct"] = comm.get("basket_vs_gold_change_pct")
+
+    # TradingView is optional; flag as degraded if the snapshot is missing or
+    # the fetcher reported degraded health.
+    tv_status = _source_flag(statuses.get("tradingview"))
+    if not tv_data or tv_status != "ok":
+        flags.tradingview = tv_status
 
     # Secondary-model short-term features
     if len(asx_open) >= 1 and len(asx_close) >= 2:
