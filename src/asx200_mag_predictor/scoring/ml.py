@@ -65,6 +65,18 @@ ML_BASE_FEATURES = [
     "gap_filled_score",
     "vwap_distance_pct",
     "market_breadth_score",
+    "breadth_pct_above_20d_ma",
+    "breadth_pct_above_50d_ma",
+    "breadth_pct_above_200d_ma",
+    "advance_decline_net",
+    "new_20d_highs",
+    "new_20d_lows",
+    "new_50d_highs",
+    "new_50d_lows",
+    "breadth_index",
+    "breadth_score",
+    "asian_session_lead_score",
+    "tv_asian_session_change_pct",
     "financials_minus_materials_1d_pct",
     "financials_minus_materials_2d_pct",
     "financials_minus_materials_3d_pct",
@@ -133,6 +145,10 @@ ML_INTERACTIONS = [
     ("tv_china_steel_property_return_pct", "iron_ore_change_pct"),
     ("regime_numeric", "financials_minus_materials_weighted_pct"),
     ("regime_numeric", "iron_ore_change_pct"),
+    ("breadth_score", "financials_minus_materials_weighted_pct"),
+    ("breadth_score", "iron_ore_change_pct"),
+    ("asian_session_lead_score", "us_equity_lead"),
+    ("asian_session_lead_score", "iron_ore_change_pct"),
 ]
 
 
@@ -676,6 +692,8 @@ class HistoricalFeatureBuilder:
             logger.debug("Volume approx failed for %s: %s", t, exc)
 
         calendar = {"high_impact_24h": 0, "high_impact_48h": 0}
+        breadth: dict[str, Any] = {"breadth_index": None, "breadth_score": None}
+        asian_session: dict[str, Any] = {"avg_change_pct": None, "changes_pct": {}}
 
         source_status = [
             {"name": "asx_cash", "status": "ok", "last_success_at": t.isoformat()},
@@ -693,6 +711,8 @@ class HistoricalFeatureBuilder:
             {"name": "china_pulse", "status": "ok", "last_success_at": t.isoformat()},
             {"name": "heavyweight_idio", "status": "ok", "last_success_at": t.isoformat()},
             {"name": "volume", "status": "ok", "last_success_at": t.isoformat()},
+            {"name": "breadth", "status": "ok", "last_success_at": t.isoformat()},
+            {"name": "asian_session", "status": "ok", "last_success_at": t.isoformat()},
             {"name": "calendar", "status": "ok", "last_success_at": t.isoformat()},
         ]
 
@@ -709,6 +729,8 @@ class HistoricalFeatureBuilder:
             heavyweight_idio=heavyweight_idio,
             volume=volume,
             calendar=calendar,
+            breadth=breadth,
+            asian_session=asian_session,
             source_status=source_status,
             errors=[],
         )
@@ -781,6 +803,26 @@ class HistoricalFeatureBuilder:
         if d.get("regime_numeric") is None:
             d["regime_numeric"] = 0.0
             d["regime_confidence"] = 0.0
+
+        # Backfill breadth and Asian session features for historical rows.
+        if d.get("breadth_score") is None:
+            d["breadth_score"] = d.get("market_breadth_score") or 0.0
+        if d.get("breadth_index") is None:
+            d["breadth_index"] = d.get("market_breadth_score") or 0.0
+        if d.get("breadth_pct_above_20d_ma") is None:
+            d["breadth_pct_above_20d_ma"] = 50.0
+            d["breadth_pct_above_50d_ma"] = 50.0
+            d["breadth_pct_above_200d_ma"] = 50.0
+        if d.get("advance_decline_net") is None:
+            d["advance_decline_net"] = 0
+            d["new_20d_highs"] = 0
+            d["new_20d_lows"] = 0
+            d["new_50d_highs"] = 0
+            d["new_50d_lows"] = 0
+        if d.get("asian_session_lead_score") is None:
+            d["asian_session_lead_score"] = d.get("tv_asian_session_change_pct") or 0.0
+            if d.get("tv_asian_session_change_pct") is None:
+                d["tv_asian_session_change_pct"] = 0.0
 
         row: dict[str, Any] = {k: d.get(k) for k in ML_BASE_FEATURES}
         row["date"] = t

@@ -106,3 +106,44 @@ def test_prediction_includes_regime(engine: ScoringEngine):
     assert p.regime in ("financials_led", "materials_led", "dual_engine", "contested")
     assert p.regime_confidence is not None
     assert 0.0 <= p.regime_confidence <= 1.0
+
+
+def test_breadth_factor_influences_primary(engine: ScoringEngine):
+    # Strong breadth (>50% above MAs, positive A/D) should push the primary score up
+    strong_breadth = FeatureVector(
+        breadth_pct_above_20d_ma=80.0,
+        advance_decline_net=20,
+        new_20d_highs=10,
+        new_20d_lows=1,
+        breadth_score=2.5,
+    )
+    weak_breadth = FeatureVector(
+        breadth_pct_above_20d_ma=20.0,
+        advance_decline_net=-20,
+        new_20d_highs=1,
+        new_20d_lows=10,
+        breadth_score=-2.5,
+    )
+    p1 = engine.predict(strong_breadth)
+    p2 = engine.predict(weak_breadth)
+    assert p1.primary_score > p2.primary_score
+
+
+def test_asian_session_lead_influences_primary(engine: ScoringEngine):
+    # Strongly positive Asian session lead should raise the primary score vs negative
+    up = FeatureVector(asian_session_lead_score=2.0)
+    down = FeatureVector(asian_session_lead_score=-2.0)
+    assert engine.predict(up).primary_score > engine.predict(down).primary_score
+
+
+def test_graduated_signal_present(engine: ScoringEngine):
+    p = engine.predict(FeatureVector())
+    assert p.graduated_recommendation in (
+        "Strong Long",
+        "Moderate Long",
+        "Hold / Neutral",
+        "Cautious / Reduce",
+        "Strong Exit / Short",
+    )
+    assert -3.0 <= p.graduated_signal <= 3.0
+    assert 0.0 <= p.graduated_confidence <= 1.0

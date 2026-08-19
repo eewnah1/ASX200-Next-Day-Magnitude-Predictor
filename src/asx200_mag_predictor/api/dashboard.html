@@ -235,7 +235,9 @@
       );
       const source = p.recommendation_source || p.model || 'Primary';
       const conf = (p.confidence || 0) * 100;
-      sub.innerHTML = `Source: <strong>${source}</strong> &middot; Confidence: <strong>${conf.toFixed(1)}%</strong> &middot; Regime: <strong>${p.regime || '-'}</strong>`;
+      const grad = p.graduated_recommendation || 'Hold / Neutral';
+      const gradSignal = (p.graduated_signal || 0).toFixed(2);
+      sub.innerHTML = `Source: <strong>${source}</strong> &middot; Confidence: <strong>${conf.toFixed(1)}%</strong> &middot; Regime: <strong>${p.regime || '-'}</strong><br>Graduated: <strong>${grad} (${gradSignal})</strong>`;
       if (p.degraded) {
         sub.innerHTML += ' <br><span style="opacity:.8;">Data degraded – using latest available data</span>';
       }
@@ -306,7 +308,7 @@
       renderMl(p);
       displayRecommendation(p);
       $('model').textContent = p.model || 'Primary';
-      $('primaryBucket').textContent = `Primary bucket: ${p.primary_bucket || p.bucket || '-'} (score ${(p.primary_score || 0).toFixed(2)}) &middot; Regime: ${p.regime || '-'}`;
+      $('primaryBucket').textContent = `Primary bucket: ${p.primary_bucket || p.bucket || '-'} (score ${(p.primary_score || 0).toFixed(2)}) &middot; Regime: ${p.regime || '-'} &middot; Graduated: ${p.graduated_recommendation || '-'} (${(p.graduated_signal || 0).toFixed(2)})`;
       const secEl = $('secondaryBucket');
       if (p.secondary_bucket) {
         secEl.style.display = 'block';

@@ -376,6 +376,8 @@ class RawMarketData:
     heavyweight_idio: dict[str, Any] | None = None
     calendar: dict[str, Any] | None = None
     volume: dict[str, Any] | None = None
+    breadth: dict[str, Any] | None = None
+    asian_session: dict[str, Any] | None = None
     tradingview: dict[str, Any] | None = None
     alpha_vantage: dict[str, Any] | None = None
     source_status: list[dict[str, Any]] = field(default_factory=list)
@@ -773,10 +775,48 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
 
     feats["vwap_distance_pct"] = session_ret
 
-    market_breadth = 0.0
-    if session_ret is not None:
-        market_breadth = _clamp(session_ret * 2.0, -1.5, 1.5)
-    feats["market_breadth_score"] = market_breadth
+    # Market breadth proxy: % above MAs, advance-decline net, new highs/lows.
+    breadth = raw.breadth or {}
+    feats["breadth_pct_above_20d_ma"] = breadth.get("pct_above_20d_ma")
+    feats["breadth_pct_above_50d_ma"] = breadth.get("pct_above_50d_ma")
+    feats["breadth_pct_above_200d_ma"] = breadth.get("pct_above_200d_ma")
+    feats["advance_decline_net"] = breadth.get("advance_decline_net")
+    feats["new_20d_highs"] = breadth.get("new_20d_highs")
+    feats["new_20d_lows"] = breadth.get("new_20d_lows")
+    feats["new_50d_highs"] = breadth.get("new_50d_highs")
+    feats["new_50d_lows"] = breadth.get("new_50d_lows")
+    feats["breadth_index"] = breadth.get("breadth_index")
+    breadth_index = breadth.get("breadth_index")
+    breadth_score: float | None = None
+    if breadth_index is not None:
+        breadth_score = _clamp(breadth_index, -3.0, 3.0)
+    elif session_ret is not None:
+        # Fallback: infer a simple breadth proxy from the session return if the
+        # full basket cannot be fetched.
+        breadth_score = _clamp(session_ret * 2.0, -1.5, 1.5)
+    feats["breadth_score"] = breadth_score
+    feats["market_breadth_score"] = breadth_score
+    if not breadth:
+        flags.breadth = _source_flag(statuses.get("breadth"))
+
+    # Asian session lead: prefer TradingView's real-time snapshot, fall back to
+    # yfinance overnight closes.
+    tv_asian = (tv_data.get("asian") or {}) if tv_data else {}
+    yf_asian = raw.asian_session or {}
+    asian_avg = None
+    asian_changes: dict[str, float] = {}
+    if tv_asian.get("avg_change_pct") is not None:
+        asian_avg = tv_asian["avg_change_pct"]
+        asian_changes = tv_asian.get("changes_pct", {})
+    elif yf_asian.get("avg_change_pct") is not None:
+        asian_avg = yf_asian["avg_change_pct"]
+        asian_changes = yf_asian.get("changes_pct", {})
+    feats["tv_asian_session_change_pct"] = asian_avg
+    feats["asian_session_changes_pct"] = asian_changes
+    if asian_avg is not None:
+        feats["asian_session_lead_score"] = _clamp(asian_avg / 0.5, -3.0, 3.0)
+    if asian_avg is None:
+        flags.tradingview = _source_flag(statuses.get("tradingview"))
 
     if not asx_close:
         flags.asx_cash = _source_flag(statuses.get("asx_cash"))

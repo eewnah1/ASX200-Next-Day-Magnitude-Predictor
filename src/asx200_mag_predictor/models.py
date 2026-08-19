@@ -38,6 +38,7 @@ class DataQualityFlags(BaseModel):
     tradingview: str = "ok"
     alpha_vantage: str = "ok"
     rba_rates: str = "ok"
+    breadth: str = "ok"
 
 
 class FeatureVector(BaseModel):
@@ -159,6 +160,22 @@ class FeatureVector(BaseModel):
     tv_china_steel_property_return_pct: float | None = None
     tv_china_steel_property_components: dict[str, float] = Field(default_factory=dict)
 
+    # Market breadth (ASX 200 proxy basket)
+    breadth_pct_above_20d_ma: float | None = None
+    breadth_pct_above_50d_ma: float | None = None
+    breadth_pct_above_200d_ma: float | None = None
+    advance_decline_net: int | None = None
+    new_20d_highs: int | None = None
+    new_20d_lows: int | None = None
+    new_50d_highs: int | None = None
+    new_50d_lows: int | None = None
+    breadth_index: float | None = None
+    breadth_score: float | None = None
+
+    # Asian session lead (composite from major Asia-Pacific markets)
+    asian_session_lead_score: float | None = None
+    asian_session_changes_pct: dict[str, float] = Field(default_factory=dict)
+
     # Regime detection (computed by the scoring engine, not a raw feed)
     regime: str | None = None
     regime_numeric: float | None = None
@@ -254,6 +271,11 @@ class Prediction(BaseModel):
     # Detected macro/sector regime
     regime: str = "contested"
     regime_confidence: float | None = None
+
+    # Graduated signal (-3 to +3) for finer risk control and signal frequency
+    graduated_signal: float = 0.0
+    graduated_recommendation: str = "Hold / Neutral"
+    graduated_confidence: float = 0.0
 
 
 class Actual(BaseModel):

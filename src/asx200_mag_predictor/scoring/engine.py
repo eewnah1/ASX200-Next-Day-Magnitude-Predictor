@@ -48,30 +48,33 @@ BUCKET_KEYS = ["negative", "low", "mid", "high"]
 PRIMARY_BUCKETS = ["Large Down", "Neutral", "Large Up"]
 SECONDARY_BUCKETS = ["Mild Bearish Bias", "True Neutral", "Mild Bullish Bias"]
 
-# Exact Model 1 weights (sum to 1.00). Each weight is multiplied by a signed
+# Exact Model 1 weights (sum to ~1.00). Each weight is multiplied by a signed
 # score in the [-3.0, +3.0] range so the maximum possible primary score is ±3.0.
-# Weights reduced slightly to make room for TradingView MCP-derived factors.
+# Weights include new breadth and Asian session-lead factors.
 PRIMARY_WEIGHTS: dict[str, float] = {
     "rsi": 0.10,
     "ath_distance": 0.09,
     "financials_vs_materials": 0.10,
     "iron_ore": 0.08,
     "momentum_exhaustion": 0.08,
-    "housing_credit": 0.07,
+    "housing_credit": 0.06,
     "heavyweight_idio": 0.07,
     "us_equity_lead": 0.05,
     "china_steel_property": 0.06,
-    "gold_silver": 0.02,
-    "spi": 0.03,
-    "a_vix": 0.01,
+    "gold_silver": 0.01,
+    "spi": 0.02,
+    "a_vix": 0.005,
     # TradingView MCP enrichment
     "tv_xjo_trend": 0.05,
     "tv_financials_vs_materials": 0.04,
     "tv_heavyweight": 0.03,
-    "tv_asian": 0.03,
-    "tv_commodity": 0.03,
-    "alpha_vantage_global_lead": 0.03,
-    "rba_rates": 0.04,
+    "tv_asian": 0.02,
+    "tv_commodity": 0.02,
+    "alpha_vantage_global_lead": 0.01,
+    "rba_rates": 0.025,
+    # New Item 6 factors
+    "market_breadth": 0.04,
+    "asian_session_lead": 0.04,
 }
 
 # Regime-aware weight modifiers. Each dict is applied to PRIMARY_WEIGHTS, then the
@@ -88,6 +91,7 @@ REGIME_WEIGHT_MODS: dict[str, dict[str, float]] = {
         "tv_financials_vs_materials": 0.7,
         "tv_commodity": 0.7,
         "tv_asian": 0.8,
+        "asian_session_lead": 0.8,
         "gold_silver": 0.8,
         "heavyweight_idio": 0.9,
         "housing_credit": 0.9,
@@ -97,6 +101,7 @@ REGIME_WEIGHT_MODS: dict[str, dict[str, float]] = {
         "ath_distance": 1.2,
         "momentum_exhaustion": 1.3,
         "a_vix": 1.3,
+        "market_breadth": 1.2,
     },
     "financials_led": {
         "financials_vs_materials": 1.4,
@@ -112,12 +117,15 @@ REGIME_WEIGHT_MODS: dict[str, dict[str, float]] = {
         "tv_commodity": 0.7,
         "gold_silver": 0.8,
         "tv_asian": 0.9,
+        "asian_session_lead": 1.0,
+        "market_breadth": 1.0,
     },
     "materials_led": {
         "iron_ore": 1.4,
         "china_steel_property": 1.3,
         "tv_commodity": 1.2,
         "tv_asian": 1.1,
+        "asian_session_lead": 1.2,
         "heavyweight_idio": 1.1,
         "tv_heavyweight": 1.1,
         "spi": 1.1,
@@ -125,10 +133,12 @@ REGIME_WEIGHT_MODS: dict[str, dict[str, float]] = {
         "rba_rates": 0.8,
         "housing_credit": 0.8,
         "tv_financials_vs_materials": 0.6,
+        "market_breadth": 0.9,
     },
     "dual_engine": {
         "us_equity_lead": 1.2,
         "tv_asian": 1.2,
+        "asian_session_lead": 1.2,
         "tv_xjo_trend": 1.2,
         "heavyweight_idio": 1.2,
         "tv_heavyweight": 1.2,
@@ -137,6 +147,7 @@ REGIME_WEIGHT_MODS: dict[str, dict[str, float]] = {
         "iron_ore": 1.1,
         "china_steel_property": 1.1,
         "alpha_vantage_global_lead": 1.1,
+        "market_breadth": 1.2,
         "rsi": 0.8,
         "ath_distance": 0.8,
         "momentum_exhaustion": 0.8,
@@ -481,6 +492,9 @@ class ScoringEngine:
             fv=fv,
             in_position=in_position,
         )
+        graduated_signal, graduated_recommendation, graduated_confidence = (
+            self._graduated_recommendation(primary_score, confidence)
+        )
         degraded, degraded_sources = self._degraded_status(fv, flags)
 
         ml_available = self.hybrid_ml.available and ml_primary_probs is not None
@@ -523,6 +537,10 @@ class ScoringEngine:
             notes.append(f"ML fallback: {fallback_reason}; using rule-based output.")
         if degraded:
             notes.append(f"Degraded prediction – missing: {', '.join(degraded_sources)}.")
+        notes.append(
+            f"Graduated signal: {graduated_signal:+.2f} ({graduated_recommendation}, "
+            f"confidence {graduated_confidence:.1%})"
+        )
         notes.append(
             f"Long-only recommendation: {recommendation} "
             f"(source: {recommendation_source}, confidence: {confidence:.1%})"
@@ -570,6 +588,9 @@ class ScoringEngine:
             in_position=in_position,
             regime=regime,
             regime_confidence=round(regime_confidence, 4),
+            graduated_signal=graduated_signal,
+            graduated_recommendation=graduated_recommendation,
+            graduated_confidence=graduated_confidence,
             **hc_kwargs,
         )
 
@@ -1085,6 +1106,59 @@ class ScoringEngine:
             rba_note,
         )
 
+        # 20. Market Breadth (ASX 200 proxy basket)
+        if flags.breadth not in ("ok", None):
+            breadth_raw = None
+            breadth_score_val = 0.0
+            breadth_note = f"Breadth source degraded ({flags.breadth}) — factor zeroed"
+        else:
+            breadth_raw = fv.breadth_score
+            breadth_score_val = _clamp(fv.breadth_score, -3.0, 3.0, 0.0)
+            pct20 = fv.breadth_pct_above_20d_ma
+            pct50 = fv.breadth_pct_above_50d_ma
+            pct200 = fv.breadth_pct_above_200d_ma
+            ad = fv.advance_decline_net
+            h20 = fv.new_20d_highs
+            l20 = fv.new_20d_lows
+            if pct20 is not None and pct50 is not None and pct200 is not None:
+                breadth_note = (
+                    f"20dMA {pct20:.1f}%, 50dMA {pct50:.1f}%, 200dMA {pct200:.1f}%; "
+                    f"A/D {ad:+d}; 20d highs/lows {h20}/{l20}"
+                )
+            else:
+                if breadth_raw is not None:
+                    breadth_note = f"breadth_score={breadth_raw:.2f}"
+                else:
+                    breadth_note = "No breadth data"
+        add(
+            "Market Breadth",
+            breadth_raw,
+            "score",
+            breadth_score_val,
+            active_weights["market_breadth"],
+            breadth_note,
+        )
+
+        # 21. Asian Session Lead (overnight Nikkei/Hang Seng/STI/KOSPI/A50)
+        if flags.tradingview not in ("ok", None):
+            asian_raw = None
+            asian_score_val = 0.0
+            asian_note = f"Asian session source degraded ({flags.tradingview}) — factor zeroed"
+        else:
+            asian_raw = fv.asian_session_lead_score
+            asian_score_val = _clamp(fv.asian_session_lead_score, -3.0, 3.0, 0.0)
+            changes = fv.asian_session_changes_pct or {}
+            snapshot = ", ".join(f"{k}={_fmt_pct(v)}" for k, v in list(changes.items())[:5])
+            asian_note = snapshot or "No Asian session data"
+        add(
+            "Asian Session Lead",
+            asian_raw,
+            "score",
+            asian_score_val,
+            active_weights["asian_session_lead"],
+            asian_note,
+        )
+
         # Active regime summary factor (weight=0 so it does not move the score but is
         # visible in the primary factor table for interpretability).
         contributions.append(
@@ -1578,6 +1652,23 @@ class ScoringEngine:
         conf = max(0.3, min(0.85, conf - data_penalty))
         recommendation = "HOLD EXISTING" if in_position else "STAY IN CASH"
         return recommendation, source, conf
+
+    def _graduated_recommendation(
+        self, primary_score: float, confidence: float
+    ) -> tuple[float, str, float]:
+        """Map the continuous primary score to a graduated signal and label."""
+        signal = _clamp(primary_score, -3.0, 3.0)
+        if signal >= 2.0:
+            label = "Strong Long"
+        elif signal >= 1.0:
+            label = "Moderate Long"
+        elif signal <= -2.0:
+            label = "Strong Exit / Short"
+        elif signal <= -1.0:
+            label = "Cautious / Reduce"
+        else:
+            label = "Hold / Neutral"
+        return signal, label, round(max(confidence, abs(signal) / 3.0), 4)
 
     def _coerce(self, features: FeatureVector | dict[str, Any]) -> FeatureVector:
         if isinstance(features, FeatureVector):

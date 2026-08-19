@@ -48,6 +48,25 @@ HOUSING_PROXIES_TICKERS = ["REA.AX", "GMG.AX", "SCG.AX", "LLC.AX"]
 CHINA_STEEL_PROPERTY_TICKERS = ["BHP.AX", "RIO.AX", "FMG.AX", "TIO=F", "HG=F"]
 HEAVYWEIGHT_TICKERS = ["CBA.AX", "BHP.AX"]
 
+# Liquid ASX proxy basket for breadth. Not the full 200, but covers all major sectors
+# and is robust to yfinance gaps for individual names.
+BREADTH_TICKERS: list[str] = [
+    "CBA.AX", "BHP.AX", "WBC.AX", "NAB.AX", "ANZ.AX",
+    "WES.AX", "MQG.AX", "WDS.AX", "FMG.AX", "RIO.AX",
+    "GMG.AX", "TLC.AX", "COL.AX", "REA.AX", "ALL.AX",
+    "SHL.AX", "CSL.AX", "RHC.AX", "RMD.AX", "COH.AX",
+    "XRO.AX", "QBE.AX", "SUN.AX", "IAG.AX", "S32.AX",
+    "MIN.AX", "PLS.AX", "NCM.AX", "EVN.AX", "NST.AX",
+    "JBH.AX", "BSL.AX", "ORI.AX", "OZL.AX", "HVN.AX",
+    "AMP.AX", "TLS.AX",
+]
+
+# Major Asia-Pacific cash indices (yfinance proxies). Order is Japan, HK, Singapore,
+# Korea, China A50. Missing symbols are silently dropped.
+ASIAN_SESSION_TICKERS: list[str] = [
+    "^N225", "^HSI", "^STI", "^KS11", "XIN9.FGI",
+]
+
 
 @dataclass
 class FetchResult:
@@ -97,6 +116,13 @@ def _fmt_pct(value: float | None) -> str:
     if value is None:
         return "n/a"
     return f"{value:+.2f}%"
+
+
+def _clamp(value: float | None, low: float, high: float, default: float = 0.0) -> float:
+    import math
+    if value is None or math.isnan(value):
+        return default
+    return max(low, min(high, value))
 
 
 def _yf_download(
@@ -170,6 +196,55 @@ def _pct_change_n(df: pd.DataFrame, n: int) -> float | None:
     except Exception as exc:  # noqa: BLE001
         logger.debug("pct_change_n failed: %s", exc)
         return None
+
+
+def _yf_download_multi(
+    tickers: list[str],
+    period: str = "60d",
+    interval: str = "1d",
+) -> pd.DataFrame:
+    """Download multiple tickers at once and return a wide close DataFrame.
+
+    Columns are tickers, rows are dates. Missing tickers are dropped.
+    Falls back to per-ticker downloads if the batched call fails.
+    """
+    if not tickers:
+        return pd.DataFrame()
+    try:
+        df = yf.download(
+            " ".join(tickers),
+            period=period,
+            interval=interval,
+            progress=False,
+            threads=True,
+            group_by="ticker",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("yfinance multi-download failed: %s", exc)
+        df = pd.DataFrame()
+
+    close: pd.DataFrame = pd.DataFrame()
+    if not df.empty:
+        if isinstance(df.columns, pd.MultiIndex):
+            valid = [t for t in tickers if t in df.columns.get_level_values(0)]
+            for t in valid:
+                tdf = df[t]
+                if "Close" in tdf.columns:
+                    close[t] = tdf["Close"]
+        else:
+            if "Close" in df.columns and len(tickers) == 1:
+                close[tickers[0]] = df["Close"]
+
+    if close.empty or len(close.columns) < max(1, len(tickers) // 4):
+        # Fallback: per-ticker downloads if the batched result is unusable.
+        per_ticker: list[pd.Series] = []
+        for t in tickers:
+            tdf = _yf_download([t], period=period, interval=interval)
+            if not tdf.empty and "Close" in tdf.columns:
+                per_ticker.append(tdf["Close"].rename(t))
+        if per_ticker:
+            close = pd.concat(per_ticker, axis=1)
+    return close
 
 
 def _basket_avg_change(
@@ -843,6 +918,133 @@ class YFinanceClient:
                 last_success_at=_aest_iso(),
             )
 
+    def breadth(self) -> FetchResult:
+        """Compute point-in-time market breadth metrics from a proxy basket.
+
+        Uses 250 days of history so 20d, 50d and 200d moving-average breadth,
+        new 20d/50d highs/lows, and an advance-decline net can all be computed
+        from the most recent close.
+        """
+        close = _yf_download_multi(BREADTH_TICKERS, period="250d", interval="1d")
+        if close.empty:
+            return FetchResult(
+                name="breadth",
+                status="failed",
+                error="Could not download breadth basket",
+                last_success_at=_aest_iso(),
+            )
+
+        # Use the latest common date for which we have at least a few valid closes.
+        valid_counts = close.notna().sum(axis=1)
+        common_dates = valid_counts[valid_counts >= 5].index
+        if common_dates.empty:
+            return FetchResult(
+                name="breadth",
+                status="failed",
+                error="Insufficient breadth data",
+                last_success_at=_aest_iso(),
+            )
+
+        latest = common_dates[-1]
+        last_close = close.loc[:latest]
+        row = last_close.iloc[-1]
+
+        ma20 = last_close.rolling(20).mean().iloc[-1]
+        ma50 = last_close.rolling(50).mean().iloc[-1]
+        ma200 = last_close.rolling(200).mean().iloc[-1]
+
+        valid = row.notna()
+        above20 = ((row > ma20) & valid).sum()
+        above50 = ((row > ma50) & valid).sum()
+        above200 = ((row > ma200) & valid).sum()
+        valid_count = int(valid.sum())
+
+        prev = last_close.shift(1).iloc[-1]
+        adv = int(((row > prev) & valid).sum())
+        dec = int(((row < prev) & valid).sum())
+        adv_decline_net = adv - dec
+
+        highs20 = last_close.rolling(20).max().shift(1).iloc[-1]
+        lows20 = last_close.rolling(20).min().shift(1).iloc[-1]
+        new20h = int(((row >= highs20) & valid & highs20.notna()).sum())
+        new20l = int(((row <= lows20) & valid & lows20.notna()).sum())
+
+        highs50 = last_close.rolling(50).max().shift(1).iloc[-1]
+        lows50 = last_close.rolling(50).min().shift(1).iloc[-1]
+        new50h = int(((row >= highs50) & valid & highs50.notna()).sum())
+        new50l = int(((row <= lows50) & valid & lows50.notna()).sum())
+
+        pct20 = (above20 / valid_count * 100.0) if valid_count else None
+        pct50 = (above50 / valid_count * 100.0) if valid_count else None
+        pct200 = (above200 / valid_count * 100.0) if valid_count else None
+
+        # Breadth index: signed -3..+3 normalised score. Combines advance-decline
+        # with the percentage above the short-term MA, centred around 50.
+        breadth_index: float | None = None
+        if valid_count:
+            ad_score = (adv_decline_net / valid_count) * 100.0
+            ma_score = (pct20 or 50.0) - 50.0
+            breadth_index = _clamp((ad_score * 0.5 + ma_score * 0.3) / 15.0, -3.0, 3.0)
+
+        data: dict[str, Any] = {
+            "valid_tickers": valid_count,
+            "pct_above_20d_ma": pct20,
+            "pct_above_50d_ma": pct50,
+            "pct_above_200d_ma": pct200,
+            "advance_decline_net": adv_decline_net,
+            "new_20d_highs": new20h,
+            "new_20d_lows": new20l,
+            "new_50d_highs": new50h,
+            "new_50d_lows": new50l,
+            "breadth_index": breadth_index,
+        }
+        return FetchResult(
+            name="breadth",
+            status="ok" if valid_count >= 5 else "stale",
+            data=data,
+            last_success_at=latest.isoformat(),
+            value=(
+                f"{valid_count} valid; 20d={pct20:.1f}%, 50d={pct50:.1f}%, "
+                f"200d={pct200:.1f}%; A/D={adv_decline_net:+d}"
+            ),
+        )
+
+    def asian_session(self) -> FetchResult:
+        """Fetch the latest overnight Asia-Pacific cash index changes."""
+        close = _yf_download_multi(ASIAN_SESSION_TICKERS, period="10d", interval="1d")
+        if close.empty:
+            return FetchResult(
+                name="asian_session",
+                status="failed",
+                error="Could not download Asian session data",
+                last_success_at=_aest_iso(),
+            )
+
+        latest = close.index[-1]
+        row = close.iloc[-1]
+        prev = close.iloc[-2]
+        changes: dict[str, float] = {}
+        for t in close.columns:
+            if pd.notna(row[t]) and pd.notna(prev[t]) and prev[t] != 0:
+                changes[t] = (row[t] - prev[t]) / prev[t] * 100.0
+
+        if not changes:
+            return FetchResult(
+                name="asian_session",
+                status="failed",
+                error="No Asian session changes available",
+                last_success_at=_aest_iso(),
+            )
+
+        avg = sum(changes.values()) / len(changes)
+        return FetchResult(
+            name="asian_session",
+            status="ok",
+            data={"changes_pct": changes, "avg_change_pct": avg},
+            last_success_at=latest.isoformat(),
+            value=f"avg {avg:+.2f}% ({', '.join(f'{k}={v:+.2f}%' for k, v in changes.items())})",
+        )
+
 
 class NewsAPICalendar:
     """Economic calendar proxy via NewsAPI headlines."""
@@ -1136,6 +1338,8 @@ class DataFetcher:
         results["china_pulse"] = self.yf.china_steel_property()
         results["heavyweight_idio"] = self.yf.heavyweight_idiosyncratic()
         results["volume"] = self.yf.intraday_asx()
+        results["breadth"] = self.yf.breadth()
+        results["asian_session"] = self.yf.asian_session()
 
         # TradingView MCP enrichment (optional; never blocks core yfinance pipeline)
         tv_result = self.tv.fetch()
@@ -1185,6 +1389,8 @@ class DataFetcher:
             heavyweight_idio=results["heavyweight_idio"].data,
             calendar=results["calendar"].data,
             volume=results["volume"].data,
+            breadth=results["breadth"].data,
+            asian_session=results["asian_session"].data,
             tradingview=tv_result.get("data"),
             alpha_vantage=results["alpha_vantage"].data,
             source_status=[
