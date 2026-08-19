@@ -17,6 +17,7 @@ import requests
 import yfinance as yf
 
 from asx200_mag_predictor.config import Settings, get_settings
+from asx200_mag_predictor.data.alpha_vantage_fetcher import AlphaVantageFetcher
 from asx200_mag_predictor.data.tradingview_fetcher import TradingViewFetcher
 from asx200_mag_predictor.logging_config import get_logger
 from asx200_mag_predictor.scoring.features import RawMarketData
@@ -1117,6 +1118,7 @@ class DataFetcher:
         self.news_calendar = NewsAPICalendar(settings)
         self.marketaux_calendar = MarketAuxCalendar(settings)
         self.tv = TradingViewFetcher()
+        self.av = AlphaVantageFetcher(settings)
 
     def fetch_all(self) -> RawMarketData:
         """Fetch every data source, cache the snapshot, and return raw data."""
@@ -1145,6 +1147,20 @@ class DataFetcher:
             last_success_at=_aest_iso(),
         )
 
+        # Alpha Vantage MCP enrichment (optional; rate-limited and cached)
+        av_result_dict = self.av.fetch()
+        av_result = FetchResult(
+            name=av_result_dict.get("name", "alpha_vantage"),
+            status=av_result_dict.get("status", "failed"),
+            data=av_result_dict.get("data", {}),
+            error=av_result_dict.get("error"),
+            last_success_at=av_result_dict.get("last_success_at"),
+        )
+        results["alpha_vantage"] = av_result
+
+        if av_result.status != "ok" and av_result.error:
+            errors.append(f"AlphaVantage: {av_result.error}")
+
         cal = self.ff_calendar.fetch()
         if cal.status != "ok":
             errors.append(f"ForexFactory: {cal.error}")
@@ -1170,6 +1186,7 @@ class DataFetcher:
             calendar=results["calendar"].data,
             volume=results["volume"].data,
             tradingview=tv_result.get("data"),
+            alpha_vantage=results["alpha_vantage"].data,
             source_status=[
                 {
                     "name": r.name,

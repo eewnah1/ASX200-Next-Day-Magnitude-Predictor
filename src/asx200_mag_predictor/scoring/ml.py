@@ -104,6 +104,14 @@ ML_BASE_FEATURES = [
     "tv_commodity_basket_change_pct",
     "tv_commodity_basket_ex_gold_change_pct",
     "tv_commodity_vs_gold_change_pct",
+    # Alpha Vantage MCP cross-asset feeds
+    "av_aud_usd_change_pct",
+    "av_spy_change_pct",
+    "av_qqq_change_pct",
+    "av_gld_change_pct",
+    "av_vixy_change_pct",
+    "av_us_10y_yield_change_bps",
+    "av_us_10y_yield_level",
 ]
 
 ML_INTERACTIONS = [
@@ -111,6 +119,7 @@ ML_INTERACTIONS = [
     ("iron_ore_change_pct", "financials_minus_materials_weighted_pct"),
     ("tv_xjo_trend_score", "tv_asian_session_change_pct"),
     ("tv_heavyweight_avg_score", "tv_commodity_vs_gold_change_pct"),
+    ("av_spy_change_pct", "av_aud_usd_change_pct"),
 ]
 
 
@@ -727,6 +736,23 @@ class HistoricalFeatureBuilder:
                 d["tv_commodity_vs_gold_change_pct"] = basket_avg - (
                     d.get("gold_change_pct") or 0.0
                 )
+
+        # Backfill Alpha Vantage MCP-derived features with yfinance proxies for
+        # historical training rows (live MCP data only starts after integration).
+        if d.get("av_aud_usd_change_pct") is None:
+            d["av_aud_usd_change_pct"] = d.get("aud_usd_change_pct")
+        if d.get("av_spy_change_pct") is None:
+            d["av_spy_change_pct"] = d.get("sp500_change_pct")
+        if d.get("av_qqq_change_pct") is None:
+            d["av_qqq_change_pct"] = d.get("nasdaq_change_pct")
+        if d.get("av_gld_change_pct") is None:
+            d["av_gld_change_pct"] = d.get("gold_change_pct")
+        if d.get("av_vixy_change_pct") is None:
+            d["av_vixy_change_pct"] = d.get("vix_change_pct")
+        if d.get("av_us_10y_yield_change_bps") is None:
+            d["av_us_10y_yield_change_bps"] = d.get("us_10y_change_bps")
+        if d.get("av_us_10y_yield_level") is None:
+            d["av_us_10y_yield_level"] = d.get("us_10y_yield_level")
 
         row: dict[str, Any] = {k: d.get(k) for k in ML_BASE_FEATURES}
         row["date"] = t

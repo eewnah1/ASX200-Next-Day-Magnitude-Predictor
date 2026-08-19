@@ -59,17 +59,18 @@ PRIMARY_WEIGHTS: dict[str, float] = {
     "momentum_exhaustion": 0.08,
     "housing_credit": 0.07,
     "heavyweight_idio": 0.07,
-    "us_equity_lead": 0.07,
+    "us_equity_lead": 0.06,
     "china_steel_property": 0.06,
-    "gold_silver": 0.04,
+    "gold_silver": 0.03,
     "spi": 0.03,
-    "a_vix": 0.03,
+    "a_vix": 0.02,
     # TradingView MCP enrichment
     "tv_xjo_trend": 0.05,
     "tv_financials_vs_materials": 0.04,
     "tv_heavyweight": 0.03,
     "tv_asian": 0.03,
     "tv_commodity": 0.03,
+    "alpha_vantage_global_lead": 0.03,
 }
 
 # Baseline magnitude distributions indexed by volatility regime (0=calm ... 4=extreme).
@@ -192,6 +193,21 @@ class ScoringEngine:
                     "tv_commodity_basket_change_pct": None,
                     "tv_commodity_basket_ex_gold_change_pct": None,
                     "tv_commodity_vs_gold_change_pct": None,
+                }
+            )
+
+        # Alpha Vantage MCP enrichment is optional; zero features if degraded so the
+        # legacy/ML models are not biased by stale or partial API data.
+        if flags.alpha_vantage not in ("ok", None):
+            fv = fv.model_copy(
+                update={
+                    "av_aud_usd_change_pct": None,
+                    "av_spy_change_pct": None,
+                    "av_qqq_change_pct": None,
+                    "av_gld_change_pct": None,
+                    "av_vixy_change_pct": None,
+                    "av_us_10y_yield_change_bps": None,
+                    "av_us_10y_yield_level": None,
                 }
             )
 
@@ -787,6 +803,57 @@ class ScoringEngine:
                 if tv_comm is not None
                 else "No TV commodity data",
             )
+
+        # 18. Alpha Vantage global cross-asset lead
+        if flags.alpha_vantage not in ("ok", None):
+            av_raw = None
+            av_score = 0.0
+            av_note = f"Alpha Vantage source degraded ({flags.alpha_vantage}) — factor zeroed"
+        else:
+            av_components: list[tuple[float, float]] = []
+            if fv.av_aud_usd_change_pct is not None:
+                av_components.append((fv.av_aud_usd_change_pct, 0.25))
+            if fv.av_spy_change_pct is not None:
+                av_components.append((fv.av_spy_change_pct, 0.30))
+            if fv.av_qqq_change_pct is not None:
+                av_components.append((fv.av_qqq_change_pct, 0.20))
+            if fv.av_gld_change_pct is not None:
+                av_components.append((fv.av_gld_change_pct, 0.10))
+            if fv.av_vixy_change_pct is not None:
+                # VIXY up = risk-off for ASX
+                av_components.append((-fv.av_vixy_change_pct, 0.10))
+            if fv.av_us_10y_yield_change_bps is not None:
+                # rising US 10Y yields are a mild headwind in risk-off terms
+                av_components.append((-fv.av_us_10y_yield_change_bps / 10.0, 0.05))
+            if av_components:
+                av_raw = (
+                    sum(v * w for v, w in av_components) / sum(w for _, w in av_components)
+                )
+            else:
+                av_raw = None
+            av_score = _clamp((av_raw or 0.0) / 1.0, -3.0, 3.0)
+            av_notes: list[str] = []
+            if fv.av_aud_usd_change_pct is not None:
+                av_notes.append(f"AUD/USD {_fmt_pct(fv.av_aud_usd_change_pct)}")
+            if fv.av_spy_change_pct is not None:
+                av_notes.append(f"SPY {_fmt_pct(fv.av_spy_change_pct)}")
+            if fv.av_qqq_change_pct is not None:
+                av_notes.append(f"QQQ {_fmt_pct(fv.av_qqq_change_pct)}")
+            if fv.av_gld_change_pct is not None:
+                av_notes.append(f"GLD {_fmt_pct(fv.av_gld_change_pct)}")
+            if fv.av_vixy_change_pct is not None:
+                av_notes.append(f"VIXY (inverted) {_fmt_pct(-fv.av_vixy_change_pct)}")
+            if fv.av_us_10y_yield_change_bps is not None:
+                av_notes.append(f"US 10Y {_fmt_pct(fv.av_us_10y_yield_change_bps, 'bps')}")
+            av_note = "; ".join(av_notes) if av_notes else "No Alpha Vantage data"
+        add(
+            "Alpha Vantage global cross-asset lead",
+            av_raw,
+            "%",
+            av_score,
+            PRIMARY_WEIGHTS["alpha_vantage_global_lead"],
+            av_note,
+        )
 
         # Strict high-conviction gating.
         rsi_for_gate = _clamp(fv.rsi_14, 0.0, 100.0, 50.0)

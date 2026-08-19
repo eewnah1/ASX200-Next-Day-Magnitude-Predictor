@@ -377,6 +377,7 @@ class RawMarketData:
     calendar: dict[str, Any] | None = None
     volume: dict[str, Any] | None = None
     tradingview: dict[str, Any] | None = None
+    alpha_vantage: dict[str, Any] | None = None
     source_status: list[dict[str, Any]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
@@ -694,6 +695,20 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
     tv_status = _source_flag(statuses.get("tradingview"))
     if not tv_data or tv_status != "ok":
         flags.tradingview = tv_status
+
+    # Alpha Vantage MCP enrichment (cross-asset feeds + macro rates)
+    av = raw.alpha_vantage or {}
+    av_data = av if not isinstance(av, dict) or "data" not in av else av.get("data", {})
+    feats["av_aud_usd_change_pct"] = av_data.get("aud_usd_change_pct")
+    feats["av_spy_change_pct"] = av_data.get("spy_change_pct")
+    feats["av_qqq_change_pct"] = av_data.get("qqq_change_pct")
+    feats["av_gld_change_pct"] = av_data.get("gld_change_pct")
+    feats["av_vixy_change_pct"] = av_data.get("vixy_change_pct")
+    feats["av_us_10y_yield_change_bps"] = av_data.get("us_10y_yield_change_bps")
+    feats["av_us_10y_yield_level"] = av_data.get("us_10y_yield_level")
+    av_status = _source_flag(statuses.get("alpha_vantage"))
+    if not av_data or av_status != "ok":
+        flags.alpha_vantage = av_status
 
     # Secondary-model short-term features
     if len(asx_open) >= 1 and len(asx_close) >= 2:

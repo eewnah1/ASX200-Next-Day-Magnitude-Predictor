@@ -36,6 +36,7 @@ class DataQualityFlags(BaseModel):
     china_steel_property: str = "ok"
     heavyweight_idio: str = "ok"
     tradingview: str = "ok"
+    alpha_vantage: str = "ok"
 
 
 class FeatureVector(BaseModel):
@@ -134,6 +135,15 @@ class FeatureVector(BaseModel):
     tv_commodity_basket_change_pct: float | None = None
     tv_commodity_basket_ex_gold_change_pct: float | None = None
     tv_commodity_vs_gold_change_pct: float | None = None
+
+    # Alpha Vantage MCP cross-asset feeds
+    av_aud_usd_change_pct: float | None = None
+    av_spy_change_pct: float | None = None
+    av_qqq_change_pct: float | None = None
+    av_gld_change_pct: float | None = None
+    av_vixy_change_pct: float | None = None
+    av_us_10y_yield_change_bps: float | None = None
+    av_us_10y_yield_level: float | None = None
 
     # Daily rates overlay (historical Australian Shares / International Shares, etc.)
     daily_rates: dict[str, float] | None = None
