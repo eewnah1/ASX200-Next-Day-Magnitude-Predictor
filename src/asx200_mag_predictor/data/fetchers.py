@@ -19,12 +19,14 @@ import yfinance as yf
 from asx200_mag_predictor.config import Settings, get_settings
 from asx200_mag_predictor.logging_config import get_logger
 from asx200_mag_predictor.scoring.features import RawMarketData
-from asx200_mag_predictor.timezone import now_sydney
+from asx200_mag_predictor.timezone import now_sydney, previous_asx_session_close, to_sydney
 
 logger = get_logger(__name__)
 
 ASX_CASH_TICKERS = ["^AXJO"]
-SPI_FUTURES_TICKERS = ["AP=F", "^AP", "SPI1.AX", "^AXJO"]  # last is cash proxy
+SPI_FUTURES_PRIMARY = ["AP=F", "^AP"]
+SPI_FUTURES_FALLBACK = ["SPI1.AX", "^AXJO"]  # ^AXJO is the cash-proxy fallback
+SPI_FUTURES_TICKERS = SPI_FUTURES_PRIMARY + SPI_FUTURES_FALLBACK
 A_VIX_TICKERS = ["^A-VIX", "^VIX"]
 IRON_ORE_TICKERS = ["FE=F", "TIO=F", "MT=F", "BHP.AX", "VALE"]
 GOLD_TICKERS = ["GC=F"]
@@ -229,6 +231,42 @@ def _last_price_and_date(df: pd.DataFrame) -> tuple[float | None, datetime | Non
         return None, None
 
 
+def _sydney_ts(ts: datetime | None) -> datetime | None:
+    """Normalise a yfinance timestamp to Australia/Sydney."""
+    if ts is None:
+        return None
+    return to_sydney(ts)
+
+
+def _spi_data_age_hours(ts: datetime | None, now: datetime | None = None) -> float | None:
+    """Return hours between timestamp and now, or None if timestamp missing."""
+    ts_syd = _sydney_ts(ts)
+    if ts_syd is None:
+        return None
+    now_syd = now if now is not None else now_sydney()
+    if now_syd.tzinfo is None:
+        now_syd = to_sydney(now_syd)
+    return max(0.0, (now_syd - ts_syd).total_seconds() / 3600.0)
+
+
+def _is_spi_fresh(ts: datetime | None, now: datetime | None = None) -> bool:
+    """True when the SPI timestamp is from the latest available ASX session or later.
+
+    This avoids false staleness on Monday morning when the last futures/cash bar
+    is from Friday's close, while still flagging data that is older than the most
+    recent ASX cash close.
+    """
+    ts_syd = _sydney_ts(ts)
+    if ts_syd is None:
+        return False
+    now_syd = now if now is not None else now_sydney()
+    if now_syd.tzinfo is None:
+        now_syd = to_sydney(now_syd)
+    latest_close = previous_asx_session_close(now_syd)
+    # Compare dates to be tolerant of time-of-day and timezone noise.
+    return ts_syd.date() >= latest_close.date()
+
+
 class YFinanceClient:
     """Thin wrapper around yfinance with fallback symbols and status metadata."""
 
@@ -261,34 +299,67 @@ class YFinanceClient:
         )
 
     def spi_futures(self) -> FetchResult:
-        used_ticker = None
-        for ticker in SPI_FUTURES_TICKERS:
+        """Fetch SPI 200 futures with primary futures sources + cash-proxy fallback.
+
+        Status is "ok" when the returned bar is from the most recent ASX session
+        or later, "stale" when a usable ticker exists but its timestamp is older
+        than the last cash close, and "failed" when nothing is available.
+        """
+        now = now_sydney()
+        used_ticker: str | None = None
+        source_group: str | None = None
+        df: pd.DataFrame = pd.DataFrame()
+
+        for ticker in SPI_FUTURES_PRIMARY:
             df = _yf_download([ticker], period="10d", interval="1d")
             if not df.empty:
                 used_ticker = ticker
+                source_group = "primary"
                 break
+        if df.empty:
+            for ticker in SPI_FUTURES_FALLBACK:
+                df = _yf_download([ticker], period="10d", interval="1d")
+                if not df.empty:
+                    used_ticker = ticker
+                    source_group = "fallback"
+                    break
+
         series = _extract_series(df) if not df.empty else None
         if not series:
             return FetchResult(
                 name="spi_futures",
                 status="failed",
-                error="Could not download SPI 200 futures",
-                last_success_at=_data_timestamp_str(df),
+                error="Could not download SPI 200 futures (primary or fallback)",
+                last_success_at=_aest_iso(),
             )
-        # Cash/futures proxies are all valid for SPI basis/momentum; avoid stale.
-        status = "ok" if used_ticker else "failed"
+
         last, ts = _last_price_and_date(df)
+        data_age_hours = _spi_data_age_hours(ts, now)
+        fresh = _is_spi_fresh(ts, now)
+        cash_proxy = used_ticker == "^AXJO"
+        status = "ok" if fresh else "stale"
+        error: str | None = None
+        if not fresh:
+            error = (
+                f"SPI data stale: {used_ticker} "
+                f"age={data_age_hours:.1f}h, last_price_date={ts.isoformat() if ts else 'n/a'}"
+            )
+
         return FetchResult(
             name="spi_futures",
             data={
                 "ticker": used_ticker,
+                "source_group": source_group,
                 "series": series,
-                "cash_proxy": used_ticker == "^AXJO",
+                "cash_proxy": cash_proxy,
                 "last_price_date": ts.isoformat() if ts else None,
+                "data_age_hours": data_age_hours,
+                "fetched_at": now.isoformat(),
             },
             status=status,
-            last_success_at=ts.isoformat() if ts else _data_timestamp_str(df),
+            last_success_at=ts.isoformat() if ts else _aest_iso(),
             value=f"last {last:.2f}" if last else None,
+            error=error,
             ticker=used_ticker,
         )
 

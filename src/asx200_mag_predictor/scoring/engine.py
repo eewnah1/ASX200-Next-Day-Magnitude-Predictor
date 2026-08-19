@@ -159,11 +159,22 @@ class ScoringEngine:
 
         prediction_for_date = self._resolve_prediction_for(prediction_for)
 
+        # If the SPI source is degraded, zero its numeric features so it cannot
+        # move the legacy probability model or the primary/secondary factors.
+        if flags.spi_futures not in ("ok", None):
+            fv = fv.model_copy(
+                update={
+                    "spi_basis_pct": None,
+                    "spi_momentum_pct": None,
+                    "spi_short_term_momentum_pct": None,
+                }
+            )
+
         # Legacy four-bucket probability distribution is retained for display.
         probs, factor_breakdown = self._legacy_probabilities(fv)
 
         # Model 1: primary high-conviction large-move classifier (rule + ML hybrid).
-        primary_contributions, primary_score, primary_bucket_rule = self._primary_model(fv)
+        primary_contributions, primary_score, primary_bucket_rule = self._primary_model(fv, flags)
         ml_primary_probs = self.hybrid_ml.primary_probs(fv)
         primary_bucket, primary_fallback = self._hybrid_primary_bucket(
             primary_score, ml_primary_probs, fv, primary_bucket_rule
@@ -215,7 +226,7 @@ class ScoringEngine:
         secondary_fallback: str | None = None
         if primary_bucket == "Neutral":
             secondary_contributions, secondary_score, secondary_bucket_rule = self._secondary_model(
-                fv, primary_bucket
+                fv, primary_bucket, flags
             )
             ml_secondary_probs = self.hybrid_ml.secondary_probs(fv)
             secondary_bucket, secondary_fallback = self._hybrid_secondary_bucket(
@@ -388,8 +399,11 @@ class ScoringEngine:
         )
         return probs, factor_breakdown
 
-    def _primary_model(self, fv: FeatureVector) -> tuple[list[FactorContribution], float, str]:
+    def _primary_model(
+        self, fv: FeatureVector, flags: DataQualityFlags | None = None
+    ) -> tuple[list[FactorContribution], float, str]:
         """Model 1: high-conviction large-move classifier with exact weights."""
+        flags = flags or DataQualityFlags()
         contributions: list[FactorContribution] = []
         total = 0.0
 
@@ -594,21 +608,29 @@ class ScoringEngine:
         )
 
         # 11. SPI 200 Futures bias (5%)
-        spi_basis = _clamp(fv.spi_basis_pct, -2.0, 2.0, 0.0)
-        spi_momentum = _clamp(fv.spi_momentum_pct, -3.0, 3.0, 0.0)
-        spi_combined = (
-            (spi_basis + spi_momentum) / 2.0
-            if (fv.spi_basis_pct is not None or fv.spi_momentum_pct is not None)
-            else 0.0
-        )
-        spi_score = _clamp(spi_combined / 0.5, -3.0, 3.0)
+        if flags.spi_futures not in ("ok", None):
+            spi_combined: float | None = None
+            spi_score = 0.0
+            spi_note = f"SPI source degraded ({flags.spi_futures}) — factor zeroed"
+        else:
+            spi_basis = _clamp(fv.spi_basis_pct, -2.0, 2.0, 0.0)
+            spi_momentum = _clamp(fv.spi_momentum_pct, -3.0, 3.0, 0.0)
+            spi_combined = (
+                (spi_basis + spi_momentum) / 2.0
+                if (fv.spi_basis_pct is not None or fv.spi_momentum_pct is not None)
+                else 0.0
+            )
+            spi_score = _clamp(spi_combined / 0.5, -3.0, 3.0)
+            spi_note = (
+                f"basis {_fmt_pct(fv.spi_basis_pct)}, momentum {_fmt_pct(fv.spi_momentum_pct)}"
+            )
         add(
             "SPI 200 Futures bias",
             spi_combined,
             "%",
             spi_score,
             PRIMARY_WEIGHTS["spi"],
-            f"basis {_fmt_pct(fv.spi_basis_pct)}, momentum {_fmt_pct(fv.spi_momentum_pct)}",
+            spi_note,
         )
 
         # 12. A-VIX / Volatility Regime (4%)
@@ -646,12 +668,13 @@ class ScoringEngine:
         return contributions, round(total, 4), primary_bucket
 
     def _secondary_model(
-        self, fv: FeatureVector, primary_bucket: str
+        self, fv: FeatureVector, primary_bucket: str, flags: DataQualityFlags | None = None
     ) -> tuple[list[FactorContribution], float, str | None]:
         """Model 2: neutral-zone mild-bias extractor. Activates only when primary is Neutral."""
         if primary_bucket != "Neutral":
             return [], 0.0, None
 
+        flags = flags or DataQualityFlags()
         contributions: list[FactorContribution] = []
         total = 0.0
         bullish = 0
@@ -824,17 +847,23 @@ class ScoringEngine:
         )
 
         # 9. SPI short-term (6%)
-        spi_short = fv.spi_short_term_momentum_pct
-        if spi_short is None:
-            spi_short = fv.spi_momentum_pct
-        spi_score = _clamp((spi_short or 0.0) / 0.5, -3.0, 3.0)
+        if flags.spi_futures not in ("ok", None):
+            spi_short: float | None = None
+            spi_score = 0.0
+            spi_note = f"SPI source degraded ({flags.spi_futures}) — factor zeroed"
+        else:
+            spi_short = fv.spi_short_term_momentum_pct
+            if spi_short is None:
+                spi_short = fv.spi_momentum_pct
+            spi_score = _clamp((spi_short or 0.0) / 0.5, -3.0, 3.0)
+            spi_note = "2-4 hour SPI futures bias (daily fallback when intraday unavailable)"
         add(
             "SPI short-term",
             spi_short,
             "%",
             spi_score,
             0.06,
-            "2-4 hour SPI futures bias (daily fallback when intraday unavailable)",
+            spi_note,
         )
 
         # 10. China Pulse (6%)

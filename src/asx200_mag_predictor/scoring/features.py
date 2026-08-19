@@ -662,21 +662,22 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
     if not asx_close:
         flags.asx_cash = _source_flag(statuses.get("asx_cash"))
 
-    # SPI basis
-    if raw.spi_futures and raw.asx_cash:
+    # SPI basis / momentum — only when the SPI source is fresh.
+    spi_status = _source_flag(statuses.get("spi_futures"))
+    if raw.spi_futures and raw.asx_cash and spi_status == "ok":
         spi_series = _hist("spi_futures", "close") or []
         asx_last = _last("asx_cash", "close")
+        cash_proxy = bool(raw.spi_futures.get("cash_proxy"))
         if isinstance(spi_series, (list, tuple)) and len(spi_series) >= 1 and asx_last:
             spi_last = spi_series[-1]
-            feats["spi_basis_pct"] = (spi_last - asx_last) / asx_last * 100.0
+            if not cash_proxy:
+                feats["spi_basis_pct"] = (spi_last - asx_last) / asx_last * 100.0
             if len(spi_series) >= 2 and spi_series[-2] != 0:
                 spi_momentum = (spi_last - spi_series[-2]) / spi_series[-2] * 100.0
                 feats["spi_momentum_pct"] = spi_momentum
                 feats["spi_short_term_momentum_pct"] = spi_momentum
-            if raw.spi_futures.get("cash_proxy"):
-                flags.spi_futures = "stale"
-    else:
-        flags.spi_futures = _source_flag(statuses.get("spi_futures"))
+    if spi_status != "ok":
+        flags.spi_futures = spi_status
 
     # Map source status to flags for downstream consumers.
     flag_map = {

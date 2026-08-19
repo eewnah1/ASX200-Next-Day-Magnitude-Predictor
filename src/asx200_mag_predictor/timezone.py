@@ -1,6 +1,6 @@
 """Timezone helpers — everything internally is Australia/Sydney; display is AEST/AEDT."""
 
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 SYDNEY = ZoneInfo("Australia/Sydney")
@@ -36,7 +36,7 @@ def next_asx_session(dt: datetime) -> datetime:
     return candidate
 
 
-def asx_holiday_list(year: int) -> list:
+def asx_holiday_list(year: int) -> list[str]:
     """Minimal fixed ASX holidays. Extend with a calendar feed for production."""
     # Standard observed dates vary by year; this is a simple best-effort list.
     fixed = [
@@ -47,3 +47,29 @@ def asx_holiday_list(year: int) -> list:
         f"{year}-12-26",
     ]
     return fixed
+
+
+def _is_asx_trading_day(d: date) -> bool:
+    """True if `d` is a weekday that is not a fixed ASX holiday."""
+    if d.weekday() >= 5:
+        return False
+    return d not in {date.fromisoformat(h) for h in asx_holiday_list(d.year)}
+
+
+def previous_asx_session_close(dt: datetime | None = None) -> datetime:
+    """Return the most recent ASX cash session close (16:00 Sydney) that has passed.
+
+    Walks backwards across weekends and the simple ASX holiday list so that
+    Friday 16:00 is the relevant reference on Monday morning, and Monday 16:00
+    is the reference once Monday has closed.
+    """
+    now = to_sydney(dt) if dt else now_sydney()
+    d = now.date()
+    close = datetime.combine(d, time(16, 0), tzinfo=SYDNEY)
+    if close > now:
+        d -= timedelta(days=1)
+        close = datetime.combine(d, time(16, 0), tzinfo=SYDNEY)
+    while not _is_asx_trading_day(d):
+        d -= timedelta(days=1)
+        close = datetime.combine(d, time(16, 0), tzinfo=SYDNEY)
+    return close
