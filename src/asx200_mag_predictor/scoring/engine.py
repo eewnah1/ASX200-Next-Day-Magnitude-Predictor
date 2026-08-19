@@ -59,11 +59,11 @@ PRIMARY_WEIGHTS: dict[str, float] = {
     "momentum_exhaustion": 0.08,
     "housing_credit": 0.07,
     "heavyweight_idio": 0.07,
-    "us_equity_lead": 0.06,
+    "us_equity_lead": 0.05,
     "china_steel_property": 0.06,
-    "gold_silver": 0.03,
+    "gold_silver": 0.02,
     "spi": 0.03,
-    "a_vix": 0.02,
+    "a_vix": 0.01,
     # TradingView MCP enrichment
     "tv_xjo_trend": 0.05,
     "tv_financials_vs_materials": 0.04,
@@ -71,6 +71,7 @@ PRIMARY_WEIGHTS: dict[str, float] = {
     "tv_asian": 0.03,
     "tv_commodity": 0.03,
     "alpha_vantage_global_lead": 0.03,
+    "rba_rates": 0.04,
 }
 
 # Baseline magnitude distributions indexed by volatility regime (0=calm ... 4=extreme).
@@ -120,6 +121,24 @@ def _fmt_pct(value: float | None, unit: str = "%") -> str:
     if value is None:
         return "n/a"
     return f"{value:+.2f}{unit}"
+
+
+def _china_note(fv: FeatureVector, composite: float | None) -> str:
+    if composite is None:
+        return "No China steel/proxy data"
+    components = fv.tv_china_steel_property_components or {}
+    parts = [f"{k}={v:+.2f}%" for k, v in components.items()]
+    tv = fv.tv_china_steel_property_return_pct
+    base = f"composite {composite:+.2f}%"
+    if parts:
+        note = f"{base} (TV composite {tv:+.2f}%"
+        if components:
+            note += "; " + ", ".join(parts)
+        note += ")"
+        return note
+    if tv is not None:
+        return f"{base} (TV composite {tv:+.2f}%)"
+    return base
 
 
 class ScoringEngine:
@@ -208,6 +227,20 @@ class ScoringEngine:
                     "av_vixy_change_pct": None,
                     "av_us_10y_yield_change_bps": None,
                     "av_us_10y_yield_level": None,
+                }
+            )
+
+        # RBA / Australian rates expectations are optional; zero if degraded.
+        if flags.rba_rates not in ("ok", None):
+            fv = fv.model_copy(
+                update={
+                    "rba_cash_rate_expected_pct": None,
+                    "rba_cash_rate_change_bps": None,
+                    "au_3y_yield_pct": None,
+                    "au_3y_yield_change_bps": None,
+                    "au_10y_yield_pct": None,
+                    "au_10y_yield_change_bps": None,
+                    "rba_rates_score": None,
                 }
             )
 
@@ -625,7 +658,7 @@ class ScoringEngine:
             "%",
             china_score_val,
             PRIMARY_WEIGHTS["china_steel_property"],
-            (f"composite {china:+.2f}%" if china is not None else "No China steel/proxy data"),
+            _china_note(fv, china),
         )
 
         # 10. Gold & Silver change (5%)
@@ -853,6 +886,36 @@ class ScoringEngine:
             av_score,
             PRIMARY_WEIGHTS["alpha_vantage_global_lead"],
             av_note,
+        )
+
+        # 19. RBA / Australian rates expectations (key Financials engine driver)
+        if flags.rba_rates not in ("ok", None):
+            rba_raw = None
+            rba_score = 0.0
+            rba_note = f"RBA rates source degraded ({flags.rba_rates}) — factor zeroed"
+        else:
+            ib1 = fv.rba_cash_rate_change_bps
+            yt1 = fv.au_3y_yield_change_bps
+            xt1 = fv.au_10y_yield_change_bps
+            if ib1 is not None:
+                weighted_bps = 0.5 * ib1 + 0.3 * (yt1 or 0.0) + 0.2 * (xt1 or 0.0)
+                rba_raw = weighted_bps
+                rba_score = _clamp(-weighted_bps / 4.0, -3.0, 3.0)
+                rba_note = (
+                    f"IB1 cash expectation {fv.rba_cash_rate_expected_pct:.3f}% "
+                    f"({ib1:+.2f} bps), 3Y {yt1:+.2f} bps, 10Y {xt1:+.2f} bps"
+                )
+            else:
+                rba_raw = None
+                rba_score = 0.0
+                rba_note = "No ASX24 rates data"
+        add(
+            "RBA / Australian rates expectations",
+            rba_raw,
+            "bps",
+            rba_score,
+            PRIMARY_WEIGHTS["rba_rates"],
+            rba_note,
         )
 
         # Strict high-conviction gating.

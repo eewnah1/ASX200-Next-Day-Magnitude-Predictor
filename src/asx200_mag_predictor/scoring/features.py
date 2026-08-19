@@ -584,10 +584,31 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
         flags.housing_credit = _source_flag(statuses.get("housing_credit"))
 
     cp = raw.china_pulse or {}
-    feats["china_steel_property_score"] = score_china_steel_property(cp.get("composite_return_pct"))
-    feats["china_steel_property_return_pct"] = cp.get("composite_return_pct")
-    feats["china_steel_property_sources"] = list((cp.get("per_ticker_1d") or {}).keys())
-    if not cp:
+    yv_composite = cp.get("composite_return_pct")
+    yv_sources = list((cp.get("per_ticker_1d") or {}).keys())
+
+    tv = raw.tradingview or {}
+    tv_data = tv if not isinstance(tv, dict) or "data" not in tv else tv.get("data", {})
+    tv_china = tv_data.get("china_pulse") or {}
+    tv_composite = tv_china.get("composite_change_pct")
+    tv_components = tv_china.get("changes_pct", {})
+
+    if tv_composite is not None and yv_composite is not None:
+        china_composite = 0.6 * tv_composite + 0.4 * yv_composite
+        china_sources = sorted(set(yv_sources) | set(tv_components.keys()))
+    elif tv_composite is not None:
+        china_composite = tv_composite
+        china_sources = sorted(tv_components.keys())
+    else:
+        china_composite = yv_composite
+        china_sources = yv_sources
+
+    feats["china_steel_property_score"] = score_china_steel_property(china_composite)
+    feats["china_steel_property_return_pct"] = china_composite
+    feats["china_steel_property_sources"] = china_sources
+    feats["tv_china_steel_property_return_pct"] = tv_composite
+    feats["tv_china_steel_property_components"] = tv_components or {}
+    if yv_composite is None and tv_composite is None:
         flags.china_steel_property = _source_flag(statuses.get("china_pulse"))
 
     hw = raw.heavyweight_idio or {}
@@ -690,11 +711,34 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
     )
     feats["tv_commodity_vs_gold_change_pct"] = comm.get("basket_vs_gold_change_pct")
 
+    # RBA / Australian rates expectations via ASX24 futures (100 - yield)
+    rates = tv_data.get("rates") or {}
+    ib1_change = rates.get("rba_cash_rate_change_bps")
+    yt1_change = rates.get("au_3y_yield_change_bps")
+    xt1_change = rates.get("au_10y_yield_change_bps")
+    feats["rba_cash_rate_expected_pct"] = rates.get("rba_cash_rate_expectation_yield")
+    feats["rba_cash_rate_change_bps"] = ib1_change
+    feats["au_3y_yield_pct"] = rates.get("au_3y_yield")
+    feats["au_3y_yield_change_bps"] = yt1_change
+    feats["au_10y_yield_pct"] = rates.get("au_10y_yield")
+    feats["au_10y_yield_change_bps"] = xt1_change
+    if ib1_change is not None:
+        weighted_change = (
+            0.5 * ib1_change
+            + 0.3 * (yt1_change or 0.0)
+            + 0.2 * (xt1_change or 0.0)
+        )
+        feats["rba_rates_score"] = _clamp(-weighted_change / 4.0, -3.0, 3.0)
+    else:
+        feats["rba_rates_score"] = None
+
     # TradingView is optional; flag as degraded if the snapshot is missing or
     # the fetcher reported degraded health.
     tv_status = _source_flag(statuses.get("tradingview"))
     if not tv_data or tv_status != "ok":
         flags.tradingview = tv_status
+    if not rates:
+        flags.rba_rates = tv_status
 
     # Alpha Vantage MCP enrichment (cross-asset feeds + macro rates)
     av = raw.alpha_vantage or {}

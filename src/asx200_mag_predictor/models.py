@@ -37,6 +37,7 @@ class DataQualityFlags(BaseModel):
     heavyweight_idio: str = "ok"
     tradingview: str = "ok"
     alpha_vantage: str = "ok"
+    rba_rates: str = "ok"
 
 
 class FeatureVector(BaseModel):
@@ -144,6 +145,19 @@ class FeatureVector(BaseModel):
     av_vixy_change_pct: float | None = None
     av_us_10y_yield_change_bps: float | None = None
     av_us_10y_yield_level: float | None = None
+
+    # RBA / Australian rates expectations (ASX24 futures: 100 - yield)
+    rba_cash_rate_expected_pct: float | None = None
+    rba_cash_rate_change_bps: float | None = None
+    au_3y_yield_pct: float | None = None
+    au_3y_yield_change_bps: float | None = None
+    au_10y_yield_pct: float | None = None
+    au_10y_yield_change_bps: float | None = None
+    rba_rates_score: float | None = None
+
+    # TradingView China / steel / iron-ore composite
+    tv_china_steel_property_return_pct: float | None = None
+    tv_china_steel_property_components: dict[str, float] = Field(default_factory=dict)
 
     # Daily rates overlay (historical Australian Shares / International Shares, etc.)
     daily_rates: dict[str, float] | None = None

@@ -112,6 +112,12 @@ ML_BASE_FEATURES = [
     "av_vixy_change_pct",
     "av_us_10y_yield_change_bps",
     "av_us_10y_yield_level",
+    # RBA / Australian rates expectations + TradingView China pulse
+    "rba_cash_rate_change_bps",
+    "au_3y_yield_change_bps",
+    "au_10y_yield_change_bps",
+    "rba_rates_score",
+    "tv_china_steel_property_return_pct",
 ]
 
 ML_INTERACTIONS = [
@@ -120,6 +126,8 @@ ML_INTERACTIONS = [
     ("tv_xjo_trend_score", "tv_asian_session_change_pct"),
     ("tv_heavyweight_avg_score", "tv_commodity_vs_gold_change_pct"),
     ("av_spy_change_pct", "av_aud_usd_change_pct"),
+    ("rba_cash_rate_change_bps", "financials_minus_materials_weighted_pct"),
+    ("tv_china_steel_property_return_pct", "iron_ore_change_pct"),
 ]
 
 
@@ -753,6 +761,16 @@ class HistoricalFeatureBuilder:
             d["av_us_10y_yield_change_bps"] = d.get("us_10y_change_bps")
         if d.get("av_us_10y_yield_level") is None:
             d["av_us_10y_yield_level"] = d.get("us_10y_yield_level")
+
+        # Backfill RBA / rates and TradingView China pulse with yfinance proxies.
+        if d.get("rba_cash_rate_change_bps") is None:
+            # No clean historical AU rates proxy available; leave as neutral.
+            d["rba_cash_rate_change_bps"] = 0.0
+            d["au_3y_yield_change_bps"] = 0.0
+            d["au_10y_yield_change_bps"] = 0.0
+            d["rba_rates_score"] = 0.0
+        if d.get("tv_china_steel_property_return_pct") is None:
+            d["tv_china_steel_property_return_pct"] = d.get("china_steel_property_return_pct")
 
         row: dict[str, Any] = {k: d.get(k) for k in ML_BASE_FEATURES}
         row["date"] = t
