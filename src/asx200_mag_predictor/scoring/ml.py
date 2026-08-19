@@ -133,6 +133,9 @@ ML_BASE_FEATURES = [
     # Regime-aware features (computed by the scoring engine)
     "regime_numeric",
     "regime_confidence",
+    # Optional enrichment layers (gracefully degrade to 0 when unavailable)
+    "news_sentiment_score",
+    "options_positioning_score",
 ]
 
 ML_INTERACTIONS = [
@@ -149,6 +152,8 @@ ML_INTERACTIONS = [
     ("breadth_score", "iron_ore_change_pct"),
     ("asian_session_lead_score", "us_equity_lead"),
     ("asian_session_lead_score", "iron_ore_change_pct"),
+    ("options_positioning_score", "a_vix"),
+    ("news_sentiment_score", "iron_ore_change_pct"),
 ]
 
 

@@ -380,6 +380,8 @@ class RawMarketData:
     asian_session: dict[str, Any] | None = None
     tradingview: dict[str, Any] | None = None
     alpha_vantage: dict[str, Any] | None = None
+    news_sentiment: dict[str, Any] | None = None
+    options_positioning: dict[str, Any] | None = None
     source_status: list[dict[str, Any]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
@@ -821,6 +823,26 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
     if not asx_close:
         flags.asx_cash = _source_flag(statuses.get("asx_cash"))
 
+    # Optional news/sentiment enrichment
+    ns = raw.news_sentiment or {}
+    if ns.get("status") == "ok":
+        feats["news_sentiment_score"] = ns.get("score")
+        feats["news_sentiment_components"] = ns.get("components") or {}
+    else:
+        flags.news_sentiment = _source_flag(statuses.get("news_sentiment"))
+        feats["news_sentiment_score"] = None
+        feats["news_sentiment_components"] = {}
+
+    # Optional options / positioning enrichment
+    op = raw.options_positioning or {}
+    if op.get("status") == "ok":
+        feats["options_positioning_score"] = op.get("score")
+        feats["options_positioning_note"] = op.get("note")
+    else:
+        flags.options_positioning = _source_flag(statuses.get("options_positioning"))
+        feats["options_positioning_score"] = None
+        feats["options_positioning_note"] = None
+
     # SPI basis / momentum — only when the SPI source is fresh.
     spi_status = _source_flag(statuses.get("spi_futures"))
     if raw.spi_futures and raw.asx_cash and spi_status == "ok":
@@ -852,6 +874,8 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
         "housing_credit": "housing_credit",
         "china_pulse": "china_steel_property",
         "heavyweight_idio": "heavyweight_idio",
+        "news_sentiment": "news_sentiment",
+        "options_positioning": "options_positioning",
     }
     for source, flag_key in flag_map.items():
         st = _source_flag(statuses.get(source))

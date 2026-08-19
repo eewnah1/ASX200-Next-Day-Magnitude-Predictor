@@ -39,6 +39,8 @@ class DataQualityFlags(BaseModel):
     alpha_vantage: str = "ok"
     rba_rates: str = "ok"
     breadth: str = "ok"
+    news_sentiment: str = "ok"
+    options_positioning: str = "ok"
 
 
 class FeatureVector(BaseModel):
@@ -184,6 +186,12 @@ class FeatureVector(BaseModel):
     # Daily rates overlay (historical Australian Shares / International Shares, etc.)
     daily_rates: dict[str, float] | None = None
 
+    # Optional enrichment layers (degrade to None/empty when unavailable)
+    news_sentiment_score: float | None = None
+    news_sentiment_components: dict[str, float] = Field(default_factory=dict)
+    options_positioning_score: float | None = None
+    options_positioning_note: str | None = None
+
     # Metadata
     fetched_at: datetime = Field(default_factory=now_sydney)
     data_as_of: datetime | None = None  # timestamp of the latest available market data
@@ -276,6 +284,19 @@ class Prediction(BaseModel):
     graduated_signal: float = 0.0
     graduated_recommendation: str = "Hold / Neutral"
     graduated_confidence: float = 0.0
+
+    # Optional enrichment layers (gracefully degrade to zero / empty)
+    news_sentiment_score: float | None = None
+    options_positioning_score: float | None = None
+    options_positioning_note: str | None = None
+
+    # Production / audit metadata
+    model_version: str | None = None
+    sizing_guidance: str | None = None
+    gap_risk_note: str | None = None
+    hard_gate_triggered: bool = False
+    soft_gate_penalty: float = 0.0
+    audit_log_id: str | None = None
 
 
 class Actual(BaseModel):

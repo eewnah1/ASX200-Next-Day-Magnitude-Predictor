@@ -40,6 +40,8 @@ class Repository:
             import uuid
 
             prediction.id = str(uuid.uuid4())
+        if not prediction.audit_log_id:
+            prediction.audit_log_id = prediction.id
         record = PredictionRecord(
             id=prediction.id,
             prediction_for_date=prediction.prediction_for_date,
@@ -72,6 +74,17 @@ class Repository:
             recommendation_source=prediction.recommendation_source,
             recommendation_confidence=prediction.recommendation_confidence,
             in_position=prediction.in_position,
+            model_version=prediction.model_version,
+            regime=prediction.regime,
+            regime_confidence=prediction.regime_confidence,
+            graduated_signal=prediction.graduated_signal,
+            graduated_recommendation=prediction.graduated_recommendation,
+            graduated_confidence=prediction.graduated_confidence,
+            sizing_guidance=prediction.sizing_guidance,
+            gap_risk_note=prediction.gap_risk_note,
+            hard_gate_triggered=prediction.hard_gate_triggered,
+            soft_gate_penalty=prediction.soft_gate_penalty,
+            audit_log_id=prediction.audit_log_id,
         )
         self.session.add(record)
         self.session.commit()
@@ -129,7 +142,7 @@ class Repository:
         ]
 
     def calibration_metrics(self) -> CalibrationMetrics:
-        """Compute simple hit-rate metrics overall and by vol regime."""
+        """Compute simple hit-rate metrics overall and by detected regime."""
         rows = (
             self.session.query(PredictionRecord, ActualRecord)
             .join(ActualRecord, PredictionRecord.id == ActualRecord.prediction_id)
@@ -142,7 +155,7 @@ class Repository:
         correct = sum(1 for p, a in rows if p.bucket == a.actual_bucket)
         by_regime: dict[str, dict[str, Any]] = defaultdict(lambda: {"total": 0, "correct": 0})
         for p, a in rows:
-            regime = p.features_json.get("vol_regime", "unknown")
+            regime = p.regime or p.features_json.get("regime", "unknown")
             by_regime[str(regime)]["total"] += 1
             if p.bucket == a.actual_bucket:
                 by_regime[str(regime)]["correct"] += 1
@@ -193,4 +206,15 @@ class Repository:
             recommendation_source=record.recommendation_source or "Primary",
             recommendation_confidence=record.recommendation_confidence or 0.0,
             in_position=record.in_position,
+            model_version=record.model_version,
+            regime=record.regime,
+            regime_confidence=record.regime_confidence,
+            graduated_signal=record.graduated_signal or 0.0,
+            graduated_recommendation=record.graduated_recommendation or "Hold / Neutral",
+            graduated_confidence=record.graduated_confidence or 0.0,
+            sizing_guidance=record.sizing_guidance,
+            gap_risk_note=record.gap_risk_note,
+            hard_gate_triggered=record.hard_gate_triggered or False,
+            soft_gate_penalty=record.soft_gate_penalty or 0.0,
+            audit_log_id=record.audit_log_id,
         )

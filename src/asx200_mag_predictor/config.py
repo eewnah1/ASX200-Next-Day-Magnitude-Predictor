@@ -44,6 +44,15 @@ class Settings(BaseSettings):
     momentum_exhaustion_weight: float = 0.08
     bollinger_weight: float = 0.05
 
+    spi_freshness_hours: int = 96  # tolerate delayed SPI/cash daily bars (weekends + vendor lag)
+
+    # Optional news / sentiment data sources
+    news_sentiment_enabled: bool = True
+    news_headlines_per_entity: int = 10
+
+    # Optional short-dated options / positioning context
+    options_positioning_enabled: bool = True
+
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     ui_port: int = 8501
