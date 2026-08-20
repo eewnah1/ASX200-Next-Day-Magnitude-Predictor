@@ -19,12 +19,19 @@ COPY main.py ./
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -e .
 
-# Ensure data directory exists (used for SQLite + optional ML models)
-RUN mkdir -p /data && chmod 777 /data
+# Ensure data directory exists (used for SQLite + ML models).
+# Also pre-seed ML models into the image so a cold / empty persistent volume
+# still has working models on first boot (ensure_seed_ml_models + lifespan
+# will copy/seed again at runtime if needed).
+RUN mkdir -p /data/ml_models && chmod -R 777 /data && \
+    if [ -d src/asx200_mag_predictor/data/seed_ml_models ]; then \
+      cp -f src/asx200_mag_predictor/data/seed_ml_models/* /data/ml_models/ || true; \
+    fi
 
 ENV APP_ENV=production \
     PYTHONUNBUFFERED=1 \
     DATABASE_URL=sqlite:////data/asx200_predictor.db \
+    DATA_DIR=/data \
     TZ=Australia/Sydney
 
 EXPOSE 8000
