@@ -1104,9 +1104,7 @@ class ScoringEngine:
                 # rising US 10Y yields are a mild headwind in risk-off terms
                 av_components.append((-fv.av_us_10y_yield_change_bps / 10.0, 0.05))
             if av_components:
-                av_raw = (
-                    sum(v * w for v, w in av_components) / sum(w for _, w in av_components)
-                )
+                av_raw = sum(v * w for v, w in av_components) / sum(w for _, w in av_components)
             else:
                 av_raw = None
             av_score = _clamp((av_raw or 0.0) / 1.0, -3.0, 3.0)
@@ -1660,10 +1658,10 @@ class ScoringEngine:
         # Allow daily-rates high-conviction overlay (score >= 3.5) to bypass RSI gating.
         overlay_override = primary_score >= 3.5
         primary_go_long = (
-            primary_score >= 1.0 and p_up >= 0.60
-            and (not technicals_bearish or overlay_override)
+            primary_score >= 1.0 and p_up >= 0.60 and (not technicals_bearish or overlay_override)
         ) or (
-            primary_score >= 2.0 and (not technicals_bearish or overlay_override)
+            primary_score >= 2.0
+            and (not technicals_bearish or overlay_override)
             and ml_primary_probs is None
         )
         if primary_go_long:
@@ -2086,8 +2084,7 @@ class ScoringEngine:
         base = abs(primary_score)
         if confidence >= 0.75 and base >= 2.0 and vol_regime <= 1:
             return (
-                "High conviction, calm vol: consider full SPI/Mini-SPI position "
-                "(with hard stop)."
+                "High conviction, calm vol: consider full SPI/Mini-SPI position (with hard stop)."
             )
         if confidence >= 0.60 and base >= 1.0 and vol_regime <= 2:
             return "Moderate conviction: consider a half-to-full SPI/Mini-SPI position."

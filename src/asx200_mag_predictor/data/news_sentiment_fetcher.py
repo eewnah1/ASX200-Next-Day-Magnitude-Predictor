@@ -201,8 +201,7 @@ class NewsSentimentFetcher:
                 data = resp.json()
                 articles = data.get("data", [])
                 headlines = [
-                    a.get("title", "") + " " + (a.get("description", "") or "")
-                    for a in articles
+                    a.get("title", "") + " " + (a.get("description", "") or "") for a in articles
                 ]
                 if headlines:
                     components[name] = _aggregate_score(headlines)

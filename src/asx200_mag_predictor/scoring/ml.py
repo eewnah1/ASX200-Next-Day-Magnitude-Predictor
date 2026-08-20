@@ -765,8 +765,7 @@ class HistoricalFeatureBuilder:
             d["tv_heavyweight_avg_score"] = d.get("heavyweight_idio_score")
         if d.get("tv_commodity_basket_change_pct") is None:
             basket = [
-                d.get(k)
-                for k in ["iron_ore_change_pct", "copper_change_pct", "oil_change_pct"]
+                d.get(k) for k in ["iron_ore_change_pct", "copper_change_pct", "oil_change_pct"]
             ]
             basket_values = [v for v in basket if v is not None]
             if basket_values:

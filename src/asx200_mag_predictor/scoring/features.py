@@ -693,14 +693,10 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
         feats["tv_xjo_trend_score"] = _clamp(weekly_score, -3.0, 3.0)
     else:
         feats["tv_xjo_trend_score"] = None
-    feats["tv_xjo_decision"] = (
-        xjo_daily.get("decision") if isinstance(xjo_daily, dict) else None
-    )
+    feats["tv_xjo_decision"] = xjo_daily.get("decision") if isinstance(xjo_daily, dict) else None
 
     sectors = tv_data.get("sectors") or {}
-    feats["tv_financials_minus_materials_pct"] = sectors.get(
-        "financials_minus_materials_pct"
-    )
+    feats["tv_financials_minus_materials_pct"] = sectors.get("financials_minus_materials_pct")
     feats["tv_financials_vs_materials_score"] = _score_tv_sector_spread(
         sectors.get("financials_minus_materials_pct")
     )
@@ -713,9 +709,7 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
 
     comm = tv_data.get("commodities") or {}
     feats["tv_commodity_basket_change_pct"] = comm.get("basket_change_pct")
-    feats["tv_commodity_basket_ex_gold_change_pct"] = comm.get(
-        "basket_ex_gold_change_pct"
-    )
+    feats["tv_commodity_basket_ex_gold_change_pct"] = comm.get("basket_ex_gold_change_pct")
     feats["tv_commodity_vs_gold_change_pct"] = comm.get("basket_vs_gold_change_pct")
 
     # RBA / Australian rates expectations via ASX24 futures (100 - yield)
@@ -730,11 +724,7 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
     feats["au_10y_yield_pct"] = rates.get("au_10y_yield")
     feats["au_10y_yield_change_bps"] = xt1_change
     if ib1_change is not None:
-        weighted_change = (
-            0.5 * ib1_change
-            + 0.3 * (yt1_change or 0.0)
-            + 0.2 * (xt1_change or 0.0)
-        )
+        weighted_change = 0.5 * ib1_change + 0.3 * (yt1_change or 0.0) + 0.2 * (xt1_change or 0.0)
         feats["rba_rates_score"] = _clamp(-weighted_change / 4.0, -3.0, 3.0)
     else:
         feats["rba_rates_score"] = None

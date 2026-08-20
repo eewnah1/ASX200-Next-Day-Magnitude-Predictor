@@ -19,6 +19,14 @@ services:
         sync: false
       - key: ALPHAVANTAGE_API_KEY
         sync: false
+      - key: TRADINGVIEW_MCP_FAILURE_COOLDOWN_S
+        value: "0"
+      - key: TRADINGVIEW_MCP_RETRY_DELAYS
+        value: "0.0"
+      - key: TRADINGVIEW_MCP_SOCKET_TIMEOUT
+        value: "10"
+      - key: TRADINGVIEW_MCP_MAX_INFLIGHT
+        value: "1"
     disk:
       name: asx200-data
       mountPath: /data

@@ -248,10 +248,7 @@ class AlphaVantageMCPClient:
     def _parse_treasury_yield_csv(text: str) -> dict[str, Any]:
         reader = csv.DictReader(io.StringIO(text))
         rows = list(reader)
-        valid_rows = [
-            r for r in rows
-            if r.get("value") and r.get("value").strip() not in ("", ".")
-        ]
+        valid_rows = [r for r in rows if r.get("value") and r.get("value").strip() not in ("", ".")]
         if not valid_rows:
             raise RuntimeError("TREASURY_YIELD CSV empty")
         last = valid_rows[0]

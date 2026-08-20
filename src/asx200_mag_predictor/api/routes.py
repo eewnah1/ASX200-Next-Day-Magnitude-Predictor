@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, cast
 
 from fastapi import APIRouter, Body, HTTPException, Query
@@ -53,10 +54,8 @@ async def status() -> dict[str, Any]:
     }
 
 
-@router.post("/predict", response_model=dict[str, Any])
-async def predict_manual(body: PredictRequest = Body(default=None)) -> dict[str, Any]:
-    """Trigger a fresh prediction from live data and store it."""
-    body = body or PredictRequest()
+def _predict_sync(body: PredictRequest) -> dict[str, Any]:
+    """Synchronous prediction pipeline, suitable for asyncio.to_thread."""
     fetcher = _fetcher()
     raw: RawMarketData | None = None
     fetch_errors: list[str] = []
@@ -82,7 +81,18 @@ async def predict_manual(body: PredictRequest = Body(default=None)) -> dict[str,
         repo = _repo()
         prediction_id = repo.save_prediction(prediction)
         return {"prediction_id": prediction_id, "prediction": prediction.model_dump(mode="json")}
-    except Exception as exc:  # noqa: B008, BLE001
+    except Exception:  # noqa: B008, BLE001
+        logger.exception("Prediction failed")
+        raise
+
+
+@router.post("/predict", response_model=dict[str, Any])
+async def predict_manual(body: PredictRequest = Body(default=None)) -> dict[str, Any]:
+    """Trigger a fresh prediction from live data and store it."""
+    body = body or PredictRequest()
+    try:
+        return await asyncio.to_thread(_predict_sync, body)
+    except Exception as exc:  # noqa: BLE001
         logger.exception("Prediction failed")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

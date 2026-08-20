@@ -56,9 +56,9 @@ _SECTOR_PAIRS = [
 
 # Australian short-end rates and treasury futures: price = 100 - yield.
 _AU_RATES = [
-    ("ib1", "ASX24:IB1!"),   # 30-day interbank cash rate (RBA expectations)
-    ("yt1", "ASX24:YT1!"),   # 3-year treasury bond futures
-    ("xt1", "ASX24:XT1!"),   # 10-year treasury bond futures
+    ("ib1", "ASX24:IB1!"),  # 30-day interbank cash rate (RBA expectations)
+    ("yt1", "ASX24:YT1!"),  # 3-year treasury bond futures
+    ("xt1", "ASX24:XT1!"),  # 10-year treasury bond futures
 ]
 
 # Cleaner China / steel / iron-ore pulse than yfinance proxies.
@@ -142,7 +142,8 @@ class TradingViewFetcher:
 
         with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as executor:
             futures = {
-                name: executor.submit(fn) for name, fn in tasks  # type: ignore[arg-type]
+                name: executor.submit(fn)
+                for name, fn in tasks  # type: ignore[arg-type]
             }
             for name, future in futures.items():
                 try:
@@ -253,9 +254,8 @@ class TradingViewFetcher:
             return None
         avg = sum(changes.values()) / len(changes)
         gold = changes.get("gold")
-        ex_gold = (
-            sum(v for k, v in changes.items() if k != "gold")
-            / max(1, len([k for k in changes if k != "gold"]))
+        ex_gold = sum(v for k, v in changes.items() if k != "gold") / max(
+            1, len([k for k in changes if k != "gold"])
         )
         vs_gold = ex_gold - (gold or 0.0)
         return {

@@ -54,20 +54,53 @@ HEAVYWEIGHT_TICKERS = ["CBA.AX", "BHP.AX"]
 # Liquid ASX proxy basket for breadth. Not the full 200, but covers all major sectors
 # and is robust to yfinance gaps for individual names.
 BREADTH_TICKERS: list[str] = [
-    "CBA.AX", "BHP.AX", "WBC.AX", "NAB.AX", "ANZ.AX",
-    "WES.AX", "MQG.AX", "WDS.AX", "FMG.AX", "RIO.AX",
-    "GMG.AX", "TLC.AX", "COL.AX", "REA.AX", "ALL.AX",
-    "SHL.AX", "CSL.AX", "RHC.AX", "RMD.AX", "COH.AX",
-    "XRO.AX", "QBE.AX", "SUN.AX", "IAG.AX", "S32.AX",
-    "MIN.AX", "PLS.AX", "NCM.AX", "EVN.AX", "NST.AX",
-    "JBH.AX", "BSL.AX", "ORI.AX", "OZL.AX", "HVN.AX",
-    "AMP.AX", "TLS.AX",
+    "CBA.AX",
+    "BHP.AX",
+    "WBC.AX",
+    "NAB.AX",
+    "ANZ.AX",
+    "WES.AX",
+    "MQG.AX",
+    "WDS.AX",
+    "FMG.AX",
+    "RIO.AX",
+    "GMG.AX",
+    "TLC.AX",
+    "COL.AX",
+    "REA.AX",
+    "ALL.AX",
+    "SHL.AX",
+    "CSL.AX",
+    "RHC.AX",
+    "RMD.AX",
+    "COH.AX",
+    "XRO.AX",
+    "QBE.AX",
+    "SUN.AX",
+    "IAG.AX",
+    "S32.AX",
+    "MIN.AX",
+    "PLS.AX",
+    "NCM.AX",
+    "EVN.AX",
+    "NST.AX",
+    "JBH.AX",
+    "BSL.AX",
+    "ORI.AX",
+    "OZL.AX",
+    "HVN.AX",
+    "AMP.AX",
+    "TLS.AX",
 ]
 
 # Major Asia-Pacific cash indices (yfinance proxies). Order is Japan, HK, Singapore,
 # Korea, China A50. Missing symbols are silently dropped.
 ASIAN_SESSION_TICKERS: list[str] = [
-    "^N225", "^HSI", "^STI", "^KS11", "XIN9.FGI",
+    "^N225",
+    "^HSI",
+    "^STI",
+    "^KS11",
+    "XIN9.FGI",
 ]
 
 
@@ -123,6 +156,7 @@ def _fmt_pct(value: float | None) -> str:
 
 def _clamp(value: float | None, low: float, high: float, default: float = 0.0) -> float:
     import math
+
     if value is None or math.isnan(value):
         return default
     return max(low, min(high, value))
@@ -365,26 +399,102 @@ class YFinanceClient:
         # 120d of daily bars gives enough history for 50-day highs and 14-day RSI.
         df = _yf_download(ASX_CASH_TICKERS, period="120d", interval="1d")
         series = _extract_series(df)
-        if not series:
+        if series and series.get("close"):
+            last, ts = _last_price_and_date(df)
             return FetchResult(
                 name="asx_cash",
-                status="failed",
-                error="Could not download ASX 200 cash data",
-                last_success_at=_data_timestamp_str(df),
+                data={
+                    "ticker": ASX_CASH_TICKERS[0],
+                    "series": series,
+                    "last_price_date": ts.isoformat() if ts else None,
+                },
+                status="ok",
+                last_success_at=ts.isoformat() if ts else _data_timestamp_str(df),
+                value=f"last {last:.2f}" if last else None,
+                ticker=ASX_CASH_TICKERS[0],
             )
-        last, ts = _last_price_and_date(df)
+
+        # yfinance empty (often a transient rate-limit from cloud hosts);
+        # try a live TradingView / Yahoo quote before giving up.
+        tv_data = self._asx_cash_tv_fallback()
+        if tv_data:
+            last = tv_data["series"]["close"][-1]
+            return FetchResult(
+                name="asx_cash",
+                data=tv_data,
+                status="degraded",
+                last_success_at=_aest_iso(),
+                value=f"last {last:.2f} (TV fallback)",
+                ticker="^AXJO",
+                error="yfinance rate-limited; using TradingView fallback snapshot",
+            )
+
         return FetchResult(
             name="asx_cash",
-            data={
-                "ticker": ASX_CASH_TICKERS[0],
-                "series": series,
-                "last_price_date": ts.isoformat() if ts else None,
-            },
-            status="ok",
-            last_success_at=ts.isoformat() if ts else _data_timestamp_str(df),
-            value=f"last {last:.2f}" if last else None,
-            ticker=ASX_CASH_TICKERS[0],
+            status="degraded",
+            error="ASX 200 cash data unavailable (yfinance and TradingView fallback failed)",
+            last_success_at=_aest_iso(),
         )
+
+    def _asx_cash_tv_fallback(self) -> dict[str, Any] | None:
+        """Fetch a single-point ASX 200 snapshot when yfinance is blocked.
+
+        Returns a minimal two-bar series so 1-day returns can still be computed.
+        """
+        try:
+            from asx200_mag_predictor.data.tradingview_mcp import atila_price
+
+            quote = atila_price("^AXJO")
+            if quote and not quote.get("error"):
+                price = quote.get("price")
+                prev = quote.get("previous_close")
+                if price is not None and prev is not None:
+                    price_f = float(price)
+                    prev_f = float(prev)
+                    return {
+                        "ticker": "^AXJO",
+                        "series": {
+                            "close": [prev_f, price_f],
+                            "open": [prev_f],
+                            "high": [max(prev_f, price_f)],
+                            "low": [min(prev_f, price_f)],
+                            "volume": [],
+                        },
+                        "last_price_date": _aest_iso(),
+                        "tv_fallback": True,
+                    }
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("ASX cash TV price fallback failed: %s", exc)
+
+        try:
+            from asx200_mag_predictor.data.tradingview_mcp import fiale_lookup
+
+            resp = fiale_lookup("ASX:XJO")
+            if resp and "symbols" in resp:
+                for item in resp["symbols"]:
+                    price = item.get("price")
+                    chg = item.get("change_percent")
+                    if price is not None:
+                        price_f = float(price)
+                        prev_f = (
+                            price_f / (1.0 + float(chg) / 100.0) if chg is not None else price_f
+                        )
+                        return {
+                            "ticker": "ASX:XJO",
+                            "series": {
+                                "close": [prev_f, price_f],
+                                "open": [prev_f],
+                                "high": [max(prev_f, price_f)],
+                                "low": [min(prev_f, price_f)],
+                                "volume": [],
+                            },
+                            "last_price_date": _aest_iso(),
+                            "tv_fallback": True,
+                        }
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("ASX cash TV screener fallback failed: %s", exc)
+
+        return None
 
     def spi_futures(self) -> FetchResult:
         """Fetch SPI 200 futures with primary futures sources + cash-proxy fallback.
@@ -416,7 +526,7 @@ class YFinanceClient:
         if not series:
             return FetchResult(
                 name="spi_futures",
-                status="failed",
+                status="degraded",
                 error="Could not download SPI 200 futures (primary or fallback)",
                 last_success_at=_aest_iso(),
             )
@@ -462,7 +572,7 @@ class YFinanceClient:
         if not series:
             return FetchResult(
                 name="a_vix",
-                status="failed",
+                status="degraded",
                 error="Could not download A-VIX / VIX",
                 last_success_at=_data_timestamp_str(df),
             )
@@ -551,7 +661,7 @@ class YFinanceClient:
         if chg is None:
             return FetchResult(
                 name="fx",
-                status="failed",
+                status="degraded",
                 error="Could not download AUD/USD",
                 last_success_at=ts.isoformat() if ts else _aest_iso(),
             )
@@ -665,7 +775,7 @@ class YFinanceClient:
         if all(v is None for v in [diff_1d, diff_3d, diff_5d]):
             return FetchResult(
                 name="financials_vs_materials",
-                status="failed",
+                status="degraded",
                 error="Could not fetch Financials or Materials basket data",
                 last_success_at=latest_ts.isoformat() if latest_ts else _aest_iso(),
             )
@@ -709,7 +819,7 @@ class YFinanceClient:
         if avg_1d is None and avg_5d is None:
             return FetchResult(
                 name="housing_credit",
-                status="failed",
+                status="degraded",
                 error="Could not fetch housing/credit proxy basket",
                 last_success_at=latest_ts.isoformat() if latest_ts else _aest_iso(),
             )
@@ -762,7 +872,7 @@ class YFinanceClient:
         if weight_used == 0:
             return FetchResult(
                 name="china_pulse",
-                status="failed",
+                status="degraded",
                 error="Could not fetch China steel/property proxies",
                 last_success_at=latest_ts.isoformat() if latest_ts else _aest_iso(),
             )
@@ -889,7 +999,7 @@ class YFinanceClient:
         if df.empty or "Close" not in df.columns or "Open" not in df.columns:
             return FetchResult(
                 name="volume",
-                status="failed",
+                status="degraded",
                 error="Could not download ASX session data",
                 last_success_at=_aest_iso(),
             )
@@ -924,7 +1034,7 @@ class YFinanceClient:
         except Exception as exc:  # noqa: BLE001
             return FetchResult(
                 name="volume",
-                status="failed",
+                status="degraded",
                 error=f"Daily fallback failed: {exc}",
                 last_success_at=_aest_iso(),
             )
@@ -940,7 +1050,7 @@ class YFinanceClient:
         if close.empty:
             return FetchResult(
                 name="breadth",
-                status="failed",
+                status="degraded",
                 error="Could not download breadth basket",
                 last_success_at=_aest_iso(),
             )
@@ -951,7 +1061,7 @@ class YFinanceClient:
         if common_dates.empty:
             return FetchResult(
                 name="breadth",
-                status="failed",
+                status="degraded",
                 error="Insufficient breadth data",
                 last_success_at=_aest_iso(),
             )
@@ -1026,7 +1136,7 @@ class YFinanceClient:
         if close.empty:
             return FetchResult(
                 name="asian_session",
-                status="failed",
+                status="degraded",
                 error="Could not download Asian session data",
                 last_success_at=_aest_iso(),
             )
@@ -1042,7 +1152,7 @@ class YFinanceClient:
         if not changes:
             return FetchResult(
                 name="asian_session",
-                status="failed",
+                status="degraded",
                 error="No Asian session changes available",
                 last_success_at=_aest_iso(),
             )
@@ -1068,7 +1178,8 @@ class NewsAPICalendar:
         if not key:
             return FetchResult(
                 name="calendar",
-                status="failed",
+                status="disabled",
+                data={},
                 error="NEWSAPI_API_KEY not configured",
                 last_success_at=_aest_iso(),
             )
@@ -1119,7 +1230,7 @@ class NewsAPICalendar:
             logger.warning("NewsAPI calendar failed: %s", exc)
             return FetchResult(
                 name="calendar",
-                status="failed",
+                status="degraded",
                 error=str(exc),
                 last_success_at=_aest_iso(),
             )
@@ -1165,7 +1276,8 @@ class MarketAuxCalendar:
         if not key:
             return FetchResult(
                 name="calendar",
-                status="failed",
+                status="disabled",
+                data={},
                 error="MARKETAUX_API_KEY not configured",
                 last_success_at=_aest_iso(),
             )
@@ -1190,7 +1302,7 @@ class MarketAuxCalendar:
             logger.debug("MarketAux calendar failed: %s", exc)
             return FetchResult(
                 name="calendar",
-                status="failed",
+                status="degraded",
                 error=str(exc),
                 last_success_at=_aest_iso(),
             )
@@ -1243,18 +1355,27 @@ class ForexFactoryCalendar:
                 return FetchResult(
                     name="calendar",
                     data=data,
-                    status="stale",
+                    status="degraded",
                     last_success_at=cache.get("cached_at", _aest_iso()),
                     value=(
                         f"{data.get('high_impact_24h', 0)} high-impact events (24h) (stale cache)"
                     ),
                     error=f"Live fetch failed, using cached calendar: {exc}",
                 )
+            # Calendar is optional enrichment; never mark the whole prediction degraded.
+            empty = {
+                "source": "forexfactory",
+                "events_next_48h": [],
+                "high_impact_24h": 0,
+                "high_impact_48h": 0,
+            }
             return FetchResult(
                 name="calendar",
-                status="failed",
-                error=str(exc),
+                data=empty,
+                status="degraded",
+                error=f"Live fetch failed, using empty calendar: {exc}",
                 last_success_at=_aest_iso(),
+                value="0 high-impact events (24h) (empty)",
             )
 
     def _cache_path(self) -> Any:
@@ -1291,10 +1412,12 @@ class ForexFactoryCalendar:
         h48 = now + timedelta(hours=48)
         high_24h: list[dict[str, Any]] = []
         high_48h: list[dict[str, Any]] = []
+        medium_24h: list[dict[str, Any]] = []
+        medium_48h: list[dict[str, Any]] = []
         for event in events:
             country = event.get("country", "")
             impact = event.get("impact", "")
-            if country not in self.FOCUS_COUNTRIES or impact != "High":
+            if country not in self.FOCUS_COUNTRIES or impact not in ("High", "Medium"):
                 continue
             try:
                 dt = datetime.fromisoformat(event.get("date", ""))
@@ -1306,18 +1429,27 @@ class ForexFactoryCalendar:
                 "title": event.get("title", ""),
                 "country": country,
                 "time": dt.isoformat(),
+                "impact": impact,
                 "forecast": event.get("forecast", ""),
                 "previous": event.get("previous", ""),
             }
-            if dt >= now and dt <= h48:
+            if dt < now or dt > h48:
+                continue
+            if impact == "High":
                 high_48h.append(ev)
                 if dt <= h24:
                     high_24h.append(ev)
+            else:
+                medium_48h.append(ev)
+                if dt <= h24:
+                    medium_24h.append(ev)
         return {
             "source": "forexfactory",
-            "events_next_48h": high_48h[:20],
+            "events_next_48h": (high_48h + medium_48h)[:30],
             "high_impact_24h": len(high_24h),
             "high_impact_48h": len(high_48h),
+            "medium_impact_24h": len(medium_24h),
+            "medium_impact_48h": len(medium_48h),
         }
 
 
@@ -1356,10 +1488,22 @@ class DataFetcher:
 
         # TradingView MCP enrichment (optional; never blocks core yfinance pipeline)
         tv_result = self.tv.fetch()
+        tv_data = tv_result.get("data") or {}
+        # Only count as degraded enrichment if at least one sub-feed returned data.
+        tv_has_data = any(
+            v is not None for v in tv_data.values() if isinstance(v, dict) for inner in [v] if inner
+        )
+        if not tv_has_data:
+            tv_has_data = any(v is not None for v in tv_data.values())
+        tv_status = (
+            "ok"
+            if tv_result.get("status") == "ok" and tv_has_data
+            else ("degraded" if tv_has_data else "failed")
+        )
         results["tradingview"] = FetchResult(
             name="tradingview",
-            status="ok" if tv_result.get("status") == "ok" else "degraded",
-            data=tv_result.get("data"),
+            status=tv_status,
+            data=tv_data,
             error="; ".join(tv_result.get("errors", [])) or None,
             last_success_at=_aest_iso(),
         )
@@ -1375,18 +1519,16 @@ class DataFetcher:
         )
         results["alpha_vantage"] = av_result
 
-        if av_result.status not in ("ok", "disabled") and av_result.error:
+        if av_result.status == "failed" and av_result.error:
             errors.append(f"AlphaVantage: {av_result.error}")
 
         cal = self.ff_calendar.fetch()
-        if cal.status != "ok":
-            errors.append(f"ForexFactory: {cal.error}")
+        if cal.status not in ("ok", "degraded"):
             cal = self.news_calendar.fetch()
-            if cal.status != "ok":
-                errors.append(f"NewsAPI: {cal.error}")
+            if cal.status not in ("ok", "degraded"):
                 cal = self.marketaux_calendar.fetch()
-                if cal.status != "ok":
-                    errors.append(f"MarketAux: {cal.error}")
+        if cal.status == "failed":
+            errors.append(f"Calendar: {cal.error}")
         results["calendar"] = cal
 
         # Optional enrichment layers (bounded latency; failures are non-blocking)
@@ -1396,11 +1538,7 @@ class DataFetcher:
             try:
                 news_raw = news_future.result(timeout=18.0)
                 # NewsSentimentFetcher returns a dataclass; normalise to a dict.
-                news_result = (
-                    news_raw
-                    if isinstance(news_raw, dict)
-                    else news_raw.__dict__
-                )
+                news_result = news_raw if isinstance(news_raw, dict) else news_raw.__dict__
             except TimeoutError:
                 news_result = {
                     "name": "news_sentiment",

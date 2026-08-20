@@ -108,7 +108,7 @@ def test_spi_futures_stale(client: YFinanceClient, monkeypatch: pytest.MonkeyPat
 
 
 def test_spi_futures_missing(client: YFinanceClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    """All tickers return empty -> failed."""
+    """All tickers return empty -> degraded so the prediction is not flagged."""
 
     def _fake_download(tickers: list[str], period: str, interval: str) -> pd.DataFrame:
         return pd.DataFrame()
@@ -116,7 +116,7 @@ def test_spi_futures_missing(client: YFinanceClient, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr("asx200_mag_predictor.data.fetchers._yf_download", _fake_download)
 
     result = client.spi_futures()
-    assert result.status == "failed"
+    assert result.status == "degraded"
     assert result.ticker is None
     assert result.error is not None
 
