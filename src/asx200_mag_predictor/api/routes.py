@@ -145,7 +145,7 @@ async def calibration() -> dict[str, Any]:
 async def calendar() -> dict[str, Any]:
     fetcher = _fetcher()
     result = fetcher.calendar()
-    data = result.data if result.status == "ok" else {}
+    data = result.data if result.status in ("ok", "degraded") else {}
     if not data:
         data = {"message": "No calendar data available"}
     return {

@@ -1714,11 +1714,15 @@ class DataFetcher:
             return None
 
     def calendar(self) -> FetchResult:
-        """Return the first successful economic calendar result."""
+        """Return the first economic calendar result that has usable data.
+
+        A degraded source with a fallback cache is preferred over a disabled
+        or failed source.
+        """
         cal = self.ff_calendar.fetch()
-        if cal.status == "ok":
+        if cal.status in ("ok", "degraded") and cal.data:
             return cal
         cal = self.news_calendar.fetch()
-        if cal.status == "ok":
+        if cal.status in ("ok", "degraded") and cal.data:
             return cal
         return self.marketaux_calendar.fetch()
