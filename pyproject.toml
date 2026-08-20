@@ -54,9 +54,13 @@ asx-predict = "asx200_mag_predictor.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/asx200_mag_predictor"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/asx200_mag_predictor/data/seed_ml_models" = "asx200_mag_predictor/data/seed_ml_models"
+
 [tool.hatch.build]
 include = [
     "src/asx200_mag_predictor/**",
+    "src/asx200_mag_predictor/data/seed_ml_models/**",
 ]
 
 [tool.pytest.ini_options]
