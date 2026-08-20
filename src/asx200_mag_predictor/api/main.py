@@ -22,7 +22,8 @@ async def lifespan(app: FastAPI):
     """Initialise DB, seed ML models if missing, and start the daily scheduler."""
     init_db(settings)
     try:
-        from asx200_mag_predictor.scoring.ml import HybridML, ensure_seed_ml_models
+        from asx200_mag_predictor.scoring.ml import HybridML
+        from asx200_mag_predictor.scoring.seed_provision import ensure_seed_ml_models
         import logging
 
         seeded = ensure_seed_ml_models(settings=settings)
