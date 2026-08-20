@@ -169,17 +169,53 @@ async def backtest_summary() -> dict[str, Any]:
 
 
 @router.post("/train-ml")
-async def train_ml() -> dict[str, Any]:
-    """Train the hybrid ML models on historical data."""
-    from asx200_mag_predictor.scoring.ml import MLTrainer
+async def train_ml(months: int = Query(default=12, ge=3, le=60)) -> dict[str, Any]:
+    """Train the hybrid ML models on historical data and persist them.
+
+    Models are written to the persistent DATA_DIR so subsequent cold starts
+    (and the next deploy) load them without re-training.
+    """
+    from asx200_mag_predictor.scoring.ml import HybridML, MLTrainer
+
+    def _run() -> dict[str, Any]:
+        settings = get_settings()
+        trainer = MLTrainer(settings=settings)
+        result = trainer.run(period=f"{months}mo")
+        hybrid = HybridML(settings=settings)
+        if hasattr(hybrid, "reload"):
+            hybrid.reload()
+        else:
+            hybrid._load()
+        out = dict(result or {})
+        out["ml_available"] = hybrid.available
+        out["model_dir"] = str(hybrid.model_dir)
+        return out
 
     try:
-        trainer = MLTrainer(settings=get_settings())
-        trainer.run()
-        return {"status": "ok", "message": "ML models trained and saved"}
+        return await asyncio.to_thread(_run)
     except Exception as exc:  # noqa: BLE001
         logger.exception("ML training failed")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/ml-status")
+async def ml_status() -> dict[str, Any]:
+    """Report whether hybrid ML models are loaded and their training metadata."""
+    from asx200_mag_predictor.scoring.ml import HybridML
+    from asx200_mag_predictor.scoring.seed_provision import ensure_seed_ml_models
+
+    settings = get_settings()
+    ensure_seed_ml_models(settings=settings)
+    hybrid = HybridML(settings=settings)
+    meta = hybrid.metadata() or {}
+    return {
+        "ml_available": hybrid.available,
+        "model_dir": str(hybrid.model_dir),
+        "has_primary": hybrid.primary is not None,
+        "has_secondary": hybrid.secondary is not None,
+        "has_mapper": hybrid.mapper is not None,
+        "metadata": meta,
+    }
 
 
 @router.post("/run-daily")
