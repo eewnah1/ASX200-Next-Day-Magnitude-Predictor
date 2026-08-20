@@ -176,9 +176,11 @@ class OptionsPositioningFetcher:
                     ),
                 }
 
+        # yfinance option chains are frequently unavailable from cloud IPs or
+        # for ASX symbols; treat as best-effort unavailable rather than hard fail.
         return {
             "name": "options_positioning",
-            "status": "failed",
-            "error": "no options data available for proxies",
+            "status": "disabled",
+            "error": "no options data available for proxies (yfinance best-effort)",
             "data": {},
         }
