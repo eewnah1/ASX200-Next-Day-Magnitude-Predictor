@@ -1,10 +1,11 @@
-"""Alpha Vantage MCP client (legacy key-in-url JSON-RPC endpoint).
+"""Alpha Vantage MCP client (standard REST endpoint fallback).
 
-The official Alpha Vantage MCP server exposes tools over a JSON-RPC HTTP
-endpoint.  This module uses plain ``requests`` POST calls so it works without
-a full MCP runtime.  Calls are cached and rate-limited to stay within the free
-tier (5 calls / minute, 25 calls / day) and degrade gracefully when the key is
-missing or the budget is exhausted.
+The official Alpha Vantage MCP server exposed over ``mcp.alphavantage.co``
+rate-limits free keys aggressively, while the standard REST API
+(``www.alphavantage.co/query``) works reliably for the three calls we need:
+``GLOBAL_QUOTE``, ``FX_DAILY``, and ``TREASURY_YIELD``.  This module uses plain
+``requests`` GET calls, caches results, and stays within the free tier
+(5 calls / minute, 25 calls / day).
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from asx200_mag_predictor.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-MCP_URL = "https://mcp.alphavantage.co/mcp"
+ALPHA_VANTAGE_URL = "https://www.alphavantage.co/query"
 FREE_TIER_DAILY_BUDGET = 20  # stay safely below the 25 call/day limit
 FREE_TIER_PER_MINUTE = 5
 CALL_INTERVAL_SECONDS = 60.0 / FREE_TIER_PER_MINUTE + 1.0  # ~13s between calls
@@ -36,7 +37,7 @@ def _today() -> str:
 
 
 class AlphaVantageMCPClient:
-    """Lightweight JSON-RPC client for the Alpha Vantage MCP server."""
+    """Lightweight client for the Alpha Vantage standard REST API."""
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -75,7 +76,6 @@ class AlphaVantageMCPClient:
             self._cache["last_call_date"] = today
 
     def _cache_key(self, tool: str, arguments: dict[str, Any]) -> str:
-        # Sort keys for stable key.
         args = json.dumps(arguments, sort_keys=True)
         return f"{tool}:{args}"
 
@@ -96,26 +96,29 @@ class AlphaVantageMCPClient:
     def _use_budget(self) -> None:
         self._cache["calls_today"] = self._cache.get("calls_today", 0) + 1
 
-    def _is_rate_limit_error(self, data: dict[str, Any]) -> bool:
-        if isinstance(data, dict) and "error" in data:
-            msg = str(data["error"]).lower()
-            if "rate limit" in msg or "premium" in msg or "entitlement" in msg:
-                return True
-        return False
-
     def _mark_budget_exhausted(self) -> None:
         self._cache["calls_today"] = FREE_TIER_DAILY_BUDGET
         self._save_cache()
 
+    def _is_rate_limit_message(self, text: str | None) -> bool:
+        if not text:
+            return False
+        lowered = text.lower()
+        return (
+            "rate limit" in lowered
+            or "premium" in lowered
+            or "25 calls per day" in lowered
+            or "api call frequency" in lowered
+        )
+
     def call(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Call an Alpha Vantage MCP tool with caching and rate limiting."""
+        """Call an Alpha Vantage endpoint with caching and rate limiting."""
         if not self.api_key:
-            raise RuntimeError("ALPHA_VANTAGE_API_KEY not configured")
+            raise RuntimeError("ALPHAVANTAGE_API_KEY not configured")
 
         key = self._cache_key(tool, arguments)
         now = datetime.utcnow()
 
-        # Return cached response if still fresh.
         cached = self._cache.get("entries", {}).get(key)
         if cached:
             try:
@@ -131,40 +134,55 @@ class AlphaVantageMCPClient:
                 return cached["data"]
             raise RuntimeError("Alpha Vantage daily API budget exhausted")
 
+        params: dict[str, Any] = {"apikey": self.api_key}
+        if tool == "GLOBAL_QUOTE":
+            params["function"] = "GLOBAL_QUOTE"
+            params["symbol"] = arguments.get("symbol")
+        elif tool == "FX_DAILY":
+            params["function"] = "FX_DAILY"
+            params["from_symbol"] = arguments.get("from_symbol")
+            params["to_symbol"] = arguments.get("to_symbol")
+            params["outputsize"] = "compact"
+        elif tool == "TREASURY_YIELD":
+            params["function"] = "TREASURY_YIELD"
+            params["interval"] = arguments.get("interval")
+            params["maturity"] = arguments.get("maturity")
+        else:
+            raise RuntimeError(f"Unknown Alpha Vantage tool: {tool}")
+
         self._rate_limit_wait()
-        url = f"{MCP_URL}?apikey={self.api_key}"
-        payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": tool, "arguments": arguments},
-        }
         try:
-            response = requests.post(url, json=payload, timeout=30)
+            response = requests.get(ALPHA_VANTAGE_URL, params=params, timeout=30)
             response.raise_for_status()
             data = response.json()
         except requests.RequestException as exc:
-            raise RuntimeError(f"Alpha Vantage MCP request failed: {exc}") from exc
+            raise RuntimeError(f"Alpha Vantage request failed: {exc}") from exc
 
-        result = data.get("result", {})
-        structured = result.get("structuredContent", {})
-        text = ""
-        if result.get("content") and isinstance(result["content"], list):
-            text = result["content"][0].get("text", "")
+        if not isinstance(data, dict):
+            raise RuntimeError(f"Alpha Vantage {tool} returned invalid JSON")
 
-        # Some endpoints return an error inside the result text/structured.
-        if "error" in structured or "error" in result:
-            error_payload = structured.get("error") or result.get("error") or {}
-            if self._is_rate_limit_error({"error": error_payload}):
-                self._mark_budget_exhausted()
-                raise RuntimeError(
-                    f"Alpha Vantage rate-limit/premium for {tool}: {error_payload}"
-                )
+        # The standard API returns an ``Information`` or ``Note`` key when the
+        # call limit is hit or the key is invalid.
+        info = data.get("Information") or data.get("Note")
+        if info and self._is_rate_limit_message(str(info)):
+            self._mark_budget_exhausted()
+            raise RuntimeError(f"Alpha Vantage rate-limit/premium for {tool}: {info}")
+        if info:
+            raise RuntimeError(f"Alpha Vantage information for {tool}: {info}")
+        if "Error Message" in data:
+            raise RuntimeError(f"Alpha Vantage error for {tool}: {data['Error Message']}")
+
+        if "Global Quote" in data:
+            parsed = self._parse_global_quote_json(data)
+        elif "Time Series FX (Daily)" in data:
+            parsed = self._parse_fx_daily(data)
+        elif "data" in data:
+            parsed = self._parse_treasury_yield(data)
+        else:
             raise RuntimeError(
-                f"Alpha Vantage tool {tool} returned error: {error_payload}"
+                f"Alpha Vantage {tool} response not recognised: {list(data.keys())[:5]}"
             )
 
-        parsed = self._parse(tool, text)
         self._use_budget()
         self._cache.setdefault("entries", {})[key] = {"ts": now.isoformat(), "data": parsed}
         self._save_cache()
@@ -172,45 +190,20 @@ class AlphaVantageMCPClient:
 
     # ------------------------------------------------------------------ parse
 
-    def _parse(self, tool: str, text: str) -> dict[str, Any]:
-        text = text.strip()
-        if not text:
-            raise RuntimeError(f"Alpha Vantage {tool} returned empty response")
-
-        if tool == "GLOBAL_QUOTE" or text.startswith("symbol,"):
-            return self._parse_global_quote_csv(text)
-
-        if "FX" in tool or text.startswith("timestamp,open,high,low,close"):
-            return self._parse_fx_csv(text)
-
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"Alpha Vantage {tool} returned invalid JSON: {exc}") from exc
-
-        if "error" in data or (
-            isinstance(data, dict) and "Information" in data and "Invalid API call" in str(data)
-        ):
-            raise RuntimeError(f"Alpha Vantage {tool} error: {data}")
-
-        if "Realtime Currency Exchange Rate" in data:
-            return self._parse_currency_exchange_rate(data)
-        if "Time Series FX (Daily)" in data:
-            return self._parse_fx_daily(data)
-        if "data" in data and isinstance(data["data"], list):
-            return self._parse_treasury_yield(data)
-        if "sample_data" in data:
-            # Preview/truncated response; try to parse embedded sample JSON or CSV.
-            sample = data["sample_data"]
-            try:
-                sample_json = json.loads(sample)
-                if "data" in sample_json:
-                    return self._parse_treasury_yield(sample_json)
-            except (json.JSONDecodeError, TypeError):
-                if isinstance(sample, str) and sample.strip().startswith("timestamp,value"):
-                    return self._parse_treasury_yield_csv(sample)
-
-        return {"raw": data}
+    def _parse_global_quote_json(self, data: dict[str, Any]) -> dict[str, Any]:
+        quote = data.get("Global Quote", {})
+        return {
+            "symbol": quote.get("01. symbol", "").strip(),
+            "open": _safe_float(quote.get("02. open")),
+            "high": _safe_float(quote.get("03. high")),
+            "low": _safe_float(quote.get("04. low")),
+            "price": _safe_float(quote.get("05. price")),
+            "volume": _safe_float(quote.get("06. volume")),
+            "latest_day": quote.get("07. latest trading day", "").strip(),
+            "previous_close": _safe_float(quote.get("08. previous close")),
+            "change": _safe_float(quote.get("09. change")),
+            "change_percent": _parse_pct(quote.get("10. change percent")),
+        }
 
     @staticmethod
     def _parse_global_quote_csv(text: str) -> dict[str, Any]:
@@ -231,38 +224,6 @@ class AlphaVantageMCPClient:
         raise RuntimeError("GLOBAL_QUOTE CSV empty")
 
     @staticmethod
-    def _parse_fx_csv(text: str) -> dict[str, Any]:
-        reader = csv.DictReader(io.StringIO(text))
-        rows = list(reader)
-        if not rows:
-            raise RuntimeError("FX CSV empty")
-        # The MCP FX response is sorted newest-first; row 0 is the latest observation.
-        last = rows[0]
-        prev = rows[1] if len(rows) >= 2 else last
-        last_close = _safe_float(last.get("close"))
-        prev_close = _safe_float(prev.get("close"))
-        change = None
-        if prev_close and prev_close != 0:
-            change = (last_close - prev_close) / prev_close * 100.0
-        return {
-            "last_refreshed": last.get("timestamp"),
-            "last_close": last_close,
-            "previous_close": prev_close,
-            "change_percent": change,
-            "series_close": [_safe_float(r.get("close")) for r in rows[:10]],
-        }
-
-    @staticmethod
-    def _parse_currency_exchange_rate(data: dict[str, Any]) -> dict[str, Any]:
-        rate = data["Realtime Currency Exchange Rate"]
-        return {
-            "from_currency": rate.get("1. From_Currency Code"),
-            "to_currency": rate.get("3. To_Currency Code"),
-            "exchange_rate": _safe_float(rate.get("5. Exchange Rate")),
-            "last_refreshed": rate.get("6. Last Refreshed"),
-        }
-
-    @staticmethod
     def _parse_fx_daily(data: dict[str, Any]) -> dict[str, Any]:
         series = data.get("Time Series FX (Daily)", {})
         if not series:
@@ -273,7 +234,7 @@ class AlphaVantageMCPClient:
         last_close = _safe_float(last.get("4. close"))
         prev_close = _safe_float(prev.get("4. close"))
         change = None
-        if prev_close and prev_close != 0:
+        if not math.isnan(prev_close) and prev_close != 0:
             change = (last_close - prev_close) / prev_close * 100.0
         return {
             "last_refreshed": data.get("Meta Data", {}).get("5. Last Refreshed"),
@@ -287,7 +248,6 @@ class AlphaVantageMCPClient:
     def _parse_treasury_yield_csv(text: str) -> dict[str, Any]:
         reader = csv.DictReader(io.StringIO(text))
         rows = list(reader)
-        # The preview CSV is sorted newest-first; skip placeholder/missing values.
         valid_rows = [
             r for r in rows
             if r.get("value") and r.get("value").strip() not in ("", ".")

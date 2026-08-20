@@ -501,6 +501,7 @@ class ScoringEngine:
             self._graduated_recommendation(primary_score, confidence)
         )
         degraded, degraded_sources = self._degraded_status(fv, flags)
+        mcp_sources = self._mcp_sources_used(fv)
         hard_gate_triggered = self._hard_gate_triggered(fv, flags, degraded_sources)
         soft_gate_penalty = round(min(len(degraded_sources) * 0.05, 0.25), 4)
 
@@ -640,6 +641,8 @@ class ScoringEngine:
             news_sentiment_score=fv.news_sentiment_score,
             options_positioning_score=fv.options_positioning_score,
             options_positioning_note=fv.options_positioning_note,
+            mcp_sources_used=mcp_sources,
+            calendar_events=fv.calendar_events,
             model_version=__version__,
             sizing_guidance=sizing_guidance,
             gap_risk_note=gap_risk_note,
@@ -1990,11 +1993,35 @@ class ScoringEngine:
         penalty = min(flag_count * 0.05, 0.25)
         return max(0.2, min(1.0, base_conf - penalty))
 
+    def _mcp_sources_used(self, fv: FeatureVector) -> list[str]:
+        """Return the optional MCP enrichers that contributed data for this prediction."""
+        mcp_names = {"tradingview", "alpha_vantage", "news_sentiment", "options_positioning"}
+        used: set[str] = set()
+        for s in fv.source_status or []:
+            if isinstance(s, DataSourceStatus):
+                name = s.name
+                status = s.status
+            elif isinstance(s, dict):
+                name = s.get("name", "")
+                status = s.get("status", "")
+            else:
+                name = getattr(s, "name", "")
+                status = getattr(s, "status", "")
+            if name in mcp_names and status in ("ok", "degraded"):
+                used.add(name)
+        return sorted(used)
+
     def _degraded_status(
         self, fv: FeatureVector, flags: DataQualityFlags
     ) -> tuple[bool, list[str]]:
-        """Return whether the prediction is degraded and the list of problem sources."""
+        """Return whether the prediction is degraded and the list of problem sources.
+
+        Only ``failed`` or ``stale`` sources count as degraded.  Optional enrichers
+        that are ``disabled`` or returned partial (``degraded``) data do not mark
+        the whole prediction degraded.
+        """
         degraded_sources: list[str] = []
+        bad_statuses = {"failed", "stale"}
         for s in fv.source_status or []:
             if isinstance(s, DataSourceStatus):
                 status = s.status
@@ -2005,11 +2032,11 @@ class ScoringEngine:
             else:
                 status = getattr(s, "status", None)
                 name = getattr(s, "name", "unknown")
-            if status in ("failed", "stale"):
+            if status in bad_statuses:
                 degraded_sources.append(name or "unknown")
-        # Also include flags that are not ok
+        # Also include flags that are failed/stale; ignore disabled/degraded optional sources.
         for k, v in flags.model_dump().items():
-            if v != "ok" and k not in degraded_sources:
+            if v in bad_statuses and k not in degraded_sources:
                 degraded_sources.append(k)
         return bool(degraded_sources), degraded_sources
 

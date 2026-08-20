@@ -491,14 +491,17 @@ def build_features(raw: RawMarketData) -> tuple[FeatureVector, DataQualityFlags]
     # Catalyst
     events_24h = 0
     events_48h = 0
+    calendar_events: list[dict[str, Any]] = []
     if raw.calendar:
         events_24h = raw.calendar.get("high_impact_24h", 0) or 0
         events_48h = raw.calendar.get("high_impact_48h", 0) or 0
+        calendar_events = raw.calendar.get("events_next_48h", []) or []
     else:
         flags.calendar = _source_flag(statuses.get("calendar"))
     feats["catalyst_score"] = compute_catalyst_score(events_24h, events_48h)
     feats["high_impact_events_next_24h"] = events_24h
     feats["high_impact_events_next_48h"] = events_48h
+    feats["calendar_events"] = calendar_events
 
     # Cross-asset
     def _change(raw_key: str, field: str = "change_pct") -> float | None:

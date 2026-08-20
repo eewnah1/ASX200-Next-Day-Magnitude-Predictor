@@ -1,67 +1,28 @@
 """TradingView MCP data adapters.
 
-Wraps two TradingView MCP services:
-- atilaahmettaner/tradingview-mcp (PyPI: tradingview-mcp-server)
-- fiale-plus/tradingview-mcp-server (npm: tradingview-mcp-server)
+Wraps the installed ``tradingview-mcp-server`` (atilaahmettaner/tradingview-mcp)
+Python API.  The previous fiale-plus CLI dependency is replaced with direct calls
+to the ``stock_screener_service`` so the predictor works in containers without
+a ``tradingview-cli`` binary.
 """
 
 from __future__ import annotations
 
-import json
-import os
-import shutil
-import subprocess
-from pathlib import Path
 from typing import Any, cast
 
 from asx200_mag_predictor.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-_TA_TIMEOUT = 30.0
-_FIALE_TIMEOUT = 90.0
 
-
-def _tradingview_cli_path() -> str:
-    """Locate the fiale-plus tradingview-cli binary."""
-    for base in [Path.home() / ".npm-global" / "bin", Path("/usr") / "local" / "bin"]:
-        candidate = base / "tradingview-cli"
-        if candidate.exists():
-            return str(candidate)
-    found = shutil.which("tradingview-cli")
-    if found:
-        return found
-    return "tradingview-cli"
-
-
-def _run_fiale_cli(*args: str) -> dict[str, Any]:
-    """Run fiale-plus tradingview-cli and return parsed JSON."""
-    cmd = [_tradingview_cli_path(), *args, "-f", "json"]
-    env = os.environ.copy()
-    env["PATH"] = str(Path.home() / ".npm-global" / "bin") + ":" + env.get("PATH", "")
+def _as_dict(obj: Any) -> dict[str, Any]:
+    """Best-effort conversion of a model/dict response to a plain dict."""
+    if isinstance(obj, dict):
+        return obj
     try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=_FIALE_TIMEOUT,
-            env=env,
-            check=False,
-        )
-        if proc.returncode != 0:
-            err = proc.stderr.strip() or proc.stdout.strip()
-            return {"error": f"fiale-plus CLI failed: {err}"}
-        return cast(dict[str, Any], json.loads(proc.stdout))
-    except json.JSONDecodeError as exc:
-        logger.exception("Could not parse fiale-plus output")
-        return {"error": f"fiale-plus output parse error: {exc}"}
-    except FileNotFoundError as exc:
-        return {"error": f"tradingview-cli not found: {exc}"}
-    except subprocess.TimeoutExpired:
-        return {"error": "fiale-plus CLI timed out"}
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("fiale-plus CLI error")
-        return {"error": str(exc)}
+        return dict(obj)  # type: ignore[arg-type]
+    except Exception:  # noqa: BLE001
+        return {"value": obj}
 
 
 def atila_market_snapshot() -> dict[str, Any]:
@@ -112,20 +73,87 @@ def fiale_screen(
     preset: str = "quality_stocks",
     limit: int = 10,
 ) -> dict[str, Any]:
-    """Run a TradingView screener preset via fiale-plus/tradingview-mcp-server."""
-    return _run_fiale_cli("screen", asset_type, "--preset", preset, "--limit", str(limit))
+    """Run a TradingView screener preset.
+
+    ``asset_type`` and ``preset`` are retained for API compatibility but are not
+    passed to the underlying service because it does not support arbitrary
+    preset names.  Use ``screen_stocks`` directly if you need a custom screen.
+    """
+    try:
+        from tradingview_mcp.core.services.stock_screener_service import screen_stocks
+
+        # Default to a broad US common-stock screen; keep the requested limit.
+        data = screen_stocks(
+            country="america",
+            stock_type="common",
+            limit=max(1, min(limit, 1000)),
+            exclude_otc=True,
+            compact=True,
+            sort_by="market_cap",
+        )
+        return {"source": "atilaahmettaner/tradingview-mcp", "data": _as_dict(data)}
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("fiale screen failed")
+        return {"source": "atilaahmettaner/tradingview-mcp", "error": str(exc)}
 
 
 def fiale_lookup(*symbols: str) -> dict[str, Any]:
-    """Look up one or more TradingView symbols via fiale-plus."""
+    """Look up one or more TradingView symbols using the installed Python API.
+
+    The legacy fiale-plus CLI is not required; this function calls
+    ``fetch_stock_prices`` and returns a compatible ``{"symbols": [...]}``
+    envelope so existing consumers do not need to change.
+    """
     if not symbols:
         return {"error": "No symbols provided"}
-    return _run_fiale_cli("lookup", *symbols)
+    try:
+        from tradingview_mcp.core.services.stock_screener_service import (
+            fetch_stock_prices,
+        )
+
+        payload = ",".join(str(s).strip() for s in symbols)
+        data = fetch_stock_prices(payload)
+        rows = data.get("rows", [])
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            ticker = row.get("ticker") or row.get("symbol")
+            if not ticker:
+                continue
+            change_pct = row.get("change_percent")
+            price = row.get("price")
+            out.append(
+                {
+                    "symbol": ticker,
+                    "ticker": ticker,
+                    "change": change_pct,
+                    "change_percent": change_pct,
+                    "close": price,
+                    "price": price,
+                    "currency": row.get("currency"),
+                    "exchange": row.get("exchange"),
+                }
+            )
+        if not out:
+            not_found = data.get("not_found", [])
+            if not_found:
+                return {"error": f"No price data for {', '.join(str(s) for s in not_found)}"}
+            return {"error": "No price data returned"}
+        return {"symbols": out}
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("fiale_lookup failed")
+        return {"error": str(exc)}
 
 
 def fiale_presets() -> dict[str, Any]:
-    """List available fiale-plus presets."""
-    return _run_fiale_cli("presets")
+    """List available presets.
+
+    The underlying Python API does not expose preset discovery, so this returns
+    the standard built-in categories.
+    """
+    return {
+        "source": "atilaahmettaner/tradingview-mcp",
+        "presets": ["quality_stocks", "top_gainers", "top_losers"],
+    }
 
 
 def get_asx200_insights() -> dict[str, Any]:

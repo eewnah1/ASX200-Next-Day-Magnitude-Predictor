@@ -56,6 +56,7 @@ class FeatureVector(BaseModel):
     catalyst_score: int | None = None
     high_impact_events_next_24h: int = 0
     high_impact_events_next_48h: int = 0
+    calendar_events: list[dict[str, Any]] = Field(default_factory=list)
 
     # Cross-asset
     us_futures_change_pct: float | None = None
@@ -289,6 +290,10 @@ class Prediction(BaseModel):
     news_sentiment_score: float | None = None
     options_positioning_score: float | None = None
     options_positioning_note: str | None = None
+
+    # MCP enrichment metadata (which MCP sources contributed to this prediction)
+    mcp_sources_used: list[str] = Field(default_factory=list)
+    calendar_events: list[dict[str, Any]] = Field(default_factory=list)
 
     # Production / audit metadata
     model_version: str | None = None

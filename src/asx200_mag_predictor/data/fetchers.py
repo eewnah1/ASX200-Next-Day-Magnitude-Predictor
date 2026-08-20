@@ -1375,7 +1375,7 @@ class DataFetcher:
         )
         results["alpha_vantage"] = av_result
 
-        if av_result.status != "ok" and av_result.error:
+        if av_result.status not in ("ok", "disabled") and av_result.error:
             errors.append(f"AlphaVantage: {av_result.error}")
 
         cal = self.ff_calendar.fetch()
