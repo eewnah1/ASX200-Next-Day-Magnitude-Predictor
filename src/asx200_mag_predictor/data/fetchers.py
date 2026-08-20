@@ -11,6 +11,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -1384,15 +1385,31 @@ class ForexFactoryCalendar:
 
     def _default_cache(self) -> dict[str, Any] | None:
         """Load a bundled fallback cache so the calendar is never empty."""
+        candidates: list[Any] = []
         try:
             import importlib.resources as resources
 
-            ref = resources.files("asx200_mag_predictor.data") / "default_ff_calendar_cache.json"
-            with ref.open("r", encoding="utf-8") as fh:
-                return json.load(fh)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("No default calendar cache available: %s", exc)
-            return None
+            candidates.append(
+                resources.files("asx200_mag_predictor.data") / "default_ff_calendar_cache.json"
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            candidates.append(Path(__file__).with_name("default_ff_calendar_cache.json"))
+        except Exception:  # noqa: BLE001
+            pass
+        for path in candidates:
+            try:
+                if isinstance(path, Path):
+                    if not path.is_file():
+                        continue
+                    return json.loads(path.read_text(encoding="utf-8"))
+                with path.open("r", encoding="utf-8") as fh:
+                    return json.load(fh)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Could not load default calendar cache from %s: %s", path, exc)
+        logger.warning("No default calendar cache available")
+        return None
 
     def _cache_path(self) -> Any:
         return self.settings.data_dir / "ff_calendar_cache.json"
