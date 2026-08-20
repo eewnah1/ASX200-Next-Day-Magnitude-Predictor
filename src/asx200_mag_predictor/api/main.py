@@ -38,9 +38,10 @@ async def lifespan(app: FastAPI):
     init_db(settings)
     _wire_yahoo_fallback()
     try:
+        import logging
+
         from asx200_mag_predictor.scoring.ml import HybridML
         from asx200_mag_predictor.scoring.seed_provision import ensure_seed_ml_models
-        import logging
 
         seeded = ensure_seed_ml_models(settings=settings)
         hybrid = HybridML(settings=settings)
