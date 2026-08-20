@@ -19,8 +19,27 @@ setup_logging(settings)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialise DB and start the daily scheduler on startup."""
+    """Initialise DB, seed ML models if missing, and start the daily scheduler."""
     init_db(settings)
+    try:
+        from asx200_mag_predictor.scoring.ml import HybridML, ensure_seed_ml_models
+        import logging
+
+        seeded = ensure_seed_ml_models(settings=settings)
+        hybrid = HybridML(settings=settings)
+        logging.getLogger("asx200_mag_predictor.api").info(
+            "ML models on startup: available=%s seeded=%s dir=%s",
+            hybrid.available,
+            seeded,
+            hybrid.model_dir,
+        )
+    except Exception as exc:  # noqa: BLE001
+        # Never block startup on ML provisioning failure
+        import logging
+
+        logging.getLogger("asx200_mag_predictor.api").warning(
+            "ML seed/load on startup failed: %s", exc
+        )
     scheduler = start_scheduler(settings)
     yield
     scheduler.shutdown()
@@ -45,7 +64,22 @@ app.include_router(router, prefix="/api/v1")
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "env": settings.app_env}
+    ml_available = False
+    ml_dir = None
+    try:
+        from asx200_mag_predictor.scoring.ml import HybridML
+
+        hybrid = HybridML(settings=settings)
+        ml_available = hybrid.available
+        ml_dir = str(hybrid.model_dir)
+    except Exception:  # noqa: BLE001
+        pass
+    return {
+        "status": "ok",
+        "env": settings.app_env,
+        "ml_available": ml_available,
+        "ml_model_dir": ml_dir,
+    }
 
 
 @app.get("/", response_class=HTMLResponse)
