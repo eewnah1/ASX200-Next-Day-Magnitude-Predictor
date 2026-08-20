@@ -1,0 +1,28 @@
+{
+  "cached_at": "2026-08-20T03:22:53.429760+00:00",
+  "data": {
+    "source": "forexfactory",
+    "events_next_48h": [
+      {
+        "title": "Philly Fed Manufacturing Index",
+        "country": "USD",
+        "time": "2026-08-20T08:30:00-04:00",
+        "impact": "Medium",
+        "forecast": "24.1",
+        "previous": "41.4"
+      },
+      {
+        "title": "Unemployment Claims",
+        "country": "USD",
+        "time": "2026-08-20T08:30:00-04:00",
+        "impact": "Medium",
+        "forecast": "210K",
+        "previous": "209K"
+      }
+    ],
+    "high_impact_24h": 0,
+    "high_impact_48h": 0,
+    "medium_impact_24h": 2,
+    "medium_impact_48h": 2
+  }
+}

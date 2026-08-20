@@ -1350,6 +1350,7 @@ class ForexFactoryCalendar:
             )
         except Exception as exc:  # noqa: BLE001
             logger.debug("ForexFactory calendar failed: %s", exc)
+            cache = cache or self._default_cache()
             if cache:
                 data = cache.get("data", {})
                 return FetchResult(
@@ -1358,9 +1359,10 @@ class ForexFactoryCalendar:
                     status="degraded",
                     last_success_at=cache.get("cached_at", _aest_iso()),
                     value=(
-                        f"{data.get('high_impact_24h', 0)} high-impact events (24h) (stale cache)"
+                        f"{data.get('high_impact_24h', 0)} high-impact events (24h)"
+                        " (fallback cache)"
                     ),
-                    error=f"Live fetch failed, using cached calendar: {exc}",
+                    error=f"Live fetch failed, using fallback calendar: {exc}",
                 )
             # Calendar is optional enrichment; never mark the whole prediction degraded.
             empty = {
@@ -1368,6 +1370,8 @@ class ForexFactoryCalendar:
                 "events_next_48h": [],
                 "high_impact_24h": 0,
                 "high_impact_48h": 0,
+                "medium_impact_24h": 0,
+                "medium_impact_48h": 0,
             }
             return FetchResult(
                 name="calendar",
@@ -1377,6 +1381,18 @@ class ForexFactoryCalendar:
                 last_success_at=_aest_iso(),
                 value="0 high-impact events (24h) (empty)",
             )
+
+    def _default_cache(self) -> dict[str, Any] | None:
+        """Load a bundled fallback cache so the calendar is never empty."""
+        try:
+            import importlib.resources as resources
+
+            ref = resources.files("asx200_mag_predictor.data") / "default_ff_calendar_cache.json"
+            with ref.open("r", encoding="utf-8") as fh:
+                return json.load(fh)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("No default calendar cache available: %s", exc)
+            return None
 
     def _cache_path(self) -> Any:
         return self.settings.data_dir / "ff_calendar_cache.json"
