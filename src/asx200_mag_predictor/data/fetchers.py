@@ -715,15 +715,24 @@ class YFinanceClient:
             if st != "ok":
                 status = st if status == "ok" else status
 
-        # 10y yield: convert % yield change to basis points (1 pct = 100 bps)
+        # 10y yield: absolute change in quoted yield (percent) -> basis points.
+        # Treasury ETF/index prices represent the yield level, so the difference
+        # between two closes, not a relative percent change, is the daily yield
+        # move in basis points.
         df10y = _yf_download(US10Y_TICKERS, period="10d", interval="1d")
-        chg10y = _latest_change_pct(df10y)
-        if chg10y is not None:
-            result["us_10y_change_bps"] = chg10y * 100.0
-            result["sources"]["us_10y"] = US10Y_TICKERS[0]
-            ts10y = _data_timestamp(df10y)
-            if ts10y and (latest_ts is None or ts10y > latest_ts):
-                latest_ts = ts10y
+        if not df10y.empty and "Close" in df10y.columns:
+            close10y = df10y["Close"].dropna()
+            if len(close10y) >= 2:
+                last10y = float(close10y.iloc[-1])
+                prev10y = float(close10y.iloc[-2])
+                result["us_10y_change_bps"] = (last10y - prev10y) * 100.0
+                result["us_10y_level"] = last10y
+                result["sources"]["us_10y"] = US10Y_TICKERS[0]
+                ts10y = _data_timestamp(df10y)
+                if ts10y and (latest_ts is None or ts10y > latest_ts):
+                    latest_ts = ts10y
+            else:
+                errors.append("us_10y: insufficient history")
         else:
             errors.append("us_10y: all tickers failed")
 

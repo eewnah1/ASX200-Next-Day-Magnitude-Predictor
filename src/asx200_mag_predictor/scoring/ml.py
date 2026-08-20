@@ -482,6 +482,21 @@ class HistoricalFeatureBuilder:
                 return chg, ticker
         return None, None
 
+    def _first_valid_yield_change_bps(
+        self, tickers: list[str], t: datetime, n: int = 1
+    ) -> tuple[float | None, str | None]:
+        """Return the absolute yield change in basis points for the first valid ticker."""
+        for ticker in tickers:
+            s = self._close_series(ticker)
+            if s.empty:
+                continue
+            cur = self._asof(s, t)
+            prev = self._asof(s.shift(n), t)
+            if cur is None or prev is None:
+                continue
+            return (cur - prev) * 100.0, ticker
+        return None, None
+
     def _basket_avg_change(self, tickers: list[str], t: datetime, n: int) -> float | None:
         values = []
         for ticker in tickers:
@@ -587,14 +602,14 @@ class HistoricalFeatureBuilder:
         nq, nq_t = self._first_valid_change(fetchers.NASDAQ_TICKERS, t, 1)
         dj, dj_t = self._first_valid_change(fetchers.DOW_TICKERS, t, 1)
         vix, vix_t = self._first_valid_change(fetchers.VIX_TICKERS, t, 1)
-        us10y, us10y_t = self._first_valid_change(fetchers.US10Y_TICKERS, t, 1)
+        us10y, us10y_t = self._first_valid_yield_change_bps(fetchers.US10Y_TICKERS, t, 1)
         us_assets = {
             "us_futures_change_pct": sp,
             "sp500_change_pct": sp,
             "nasdaq_change_pct": nq,
             "dow_change_pct": dj,
             "vix_change_pct": vix,
-            "us_10y_change_bps": us10y * 100.0 if us10y is not None else None,
+            "us_10y_change_bps": us10y,
             "sources": {
                 "sp500": sp_t,
                 "nasdaq": nq_t,

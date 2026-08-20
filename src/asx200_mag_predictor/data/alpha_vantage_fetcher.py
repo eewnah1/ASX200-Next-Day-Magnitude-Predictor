@@ -78,6 +78,36 @@ def _yf_fallback_change(ticker: str) -> tuple[float | None, float | None]:
         return None, None
 
 
+def _yf_fallback_yield(ticker: str) -> tuple[float | None, float | None]:
+    """Fetch the last two daily treasury yield closes and return change in bps.
+
+    Treasury yield tickers (^TNX) are quoted in percent, so the absolute
+    difference between two closes multiplied by 100 is the daily yield change
+    in basis points.
+    """
+    try:
+        df = yf.download(
+            ticker,
+            period="10d",
+            interval="1d",
+            progress=False,
+            threads=False,
+            timeout=15,
+        )
+        if df is None or df.empty or "Close" not in df.columns:
+            return None, None
+        closes = df["Close"].squeeze() if isinstance(df["Close"], pd.DataFrame) else df["Close"]
+        closes = closes.dropna()
+        if len(closes) < 2:
+            return None, None
+        last = float(closes.iloc[-1])
+        prev = float(closes.iloc[-2])
+        return (last - prev) * 100.0, last
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("yfinance fallback yield for %s failed: %s", ticker, exc)
+        return None, None
+
+
 class AlphaVantageFetcher:
     """Fetch and cache Alpha Vantage free-tier series for the ASX200 pipeline."""
 
@@ -120,10 +150,9 @@ class AlphaVantageFetcher:
             if key == "us_10y_yield":
                 if data.get("us_10y_yield_change_bps") is not None:
                     continue
-                chg, level = _yf_fallback_change(yf_symbol)
+                chg, level = _yf_fallback_yield(yf_symbol)
                 if chg is not None and level is not None:
-                    # yfinance returns the yield in percent; convert to bps.
-                    data["us_10y_yield_change_bps"] = chg * 100.0
+                    data["us_10y_yield_change_bps"] = chg
                     data["us_10y_yield_level"] = level
                     data["us_10y_yield_last_date"] = datetime.utcnow().isoformat()
                     fallback_used = True
