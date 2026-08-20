@@ -117,6 +117,14 @@ class NewsSentimentFetcher:
         if not self.settings.news_sentiment_enabled:
             return SentimentResult(status="disabled", error="news_sentiment_enabled=False")
 
+        has_newsapi = bool((self.settings.newsapi_api_key or "").strip())
+        has_marketaux = bool((self.settings.marketaux_api_key or "").strip())
+        if not has_newsapi and not has_marketaux:
+            return SentimentResult(
+                status="disabled",
+                error="NEWSAPI_API_KEY / MARKETAUX_API_KEY not set (optional enrichment)",
+            )
+
         try:
             return self._fetch_newsapi()
         except Exception as exc:  # noqa: BLE001
