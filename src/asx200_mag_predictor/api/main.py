@@ -17,10 +17,26 @@ settings = get_settings()
 setup_logging(settings)
 
 
+def _wire_yahoo_fallback() -> None:
+    """Replace fragile yfinance-only download with chart-API-aware implementation."""
+    try:
+        import asx200_mag_predictor.data.fetchers as fetchers_mod
+        from asx200_mag_predictor.data.yahoo_download import yf_download
+
+        fetchers_mod._yf_download = yf_download  # type: ignore[attr-defined]
+    except Exception as exc:  # noqa: BLE001
+        import logging
+
+        logging.getLogger("asx200_mag_predictor.api").warning(
+            "Could not wire Yahoo chart fallback: %s", exc
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialise DB, seed ML models if missing, and start the daily scheduler."""
     init_db(settings)
+    _wire_yahoo_fallback()
     try:
         from asx200_mag_predictor.scoring.ml import HybridML
         from asx200_mag_predictor.scoring.seed_provision import ensure_seed_ml_models
@@ -35,7 +51,6 @@ async def lifespan(app: FastAPI):
             hybrid.model_dir,
         )
     except Exception as exc:  # noqa: BLE001
-        # Never block startup on ML provisioning failure
         import logging
 
         logging.getLogger("asx200_mag_predictor.api").warning(
