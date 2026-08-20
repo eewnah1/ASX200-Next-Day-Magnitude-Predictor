@@ -17,6 +17,8 @@ services:
         sync: false
       - key: MARKETAUX_API_KEY
         sync: false
+      - key: ALPHAVANTAGE_API_KEY
+        sync: false
     disk:
       name: asx200-data
       mountPath: /data
