@@ -39,6 +39,16 @@ class AlphaVantageFetcher:
 
     def fetch(self) -> dict[str, Any]:
         """Return a dict mimicking a FetchResult with Alpha-Vantage-derived market snapshots."""
+        if not (self.settings.alphavantage_api_key or "").strip():
+            return {
+                "name": "alpha_vantage",
+                "status": "disabled",
+                "data": {},
+                "error": "ALPHAVANTAGE_API_KEY not set (optional enrichment)",
+                "last_success_at": datetime.utcnow().isoformat(),
+                "errors": [],
+            }
+
         errors: list[str] = []
         data: dict[str, Any] = {"_timestamp": datetime.utcnow().isoformat()}
         failed = False
