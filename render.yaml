@@ -11,6 +11,8 @@ services:
         value: production
       - key: DATABASE_URL
         value: sqlite:////data/asx200_predictor.db
+      - key: DATA_DIR
+        value: /data
       - key: TZ
         value: Australia/Sydney
       - key: NEWSAPI_API_KEY

@@ -1,5 +1,6 @@
 """Application configuration via pydantic-settings."""
 
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -63,7 +64,7 @@ class Settings(BaseSettings):
 
     @property
     def data_dir(self) -> Path:
-        path = Path("data")
+        path = Path(os.environ.get("DATA_DIR", "data"))
         path.mkdir(parents=True, exist_ok=True)
         return path
 

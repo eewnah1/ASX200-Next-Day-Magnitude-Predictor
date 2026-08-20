@@ -19,9 +19,6 @@ logger = get_logger(__name__)
 
 _ALPHA_VANTAGE_TARGETS = {
     "spy": ("GLOBAL_QUOTE", {"symbol": "SPY"}),
-    "qqq": ("GLOBAL_QUOTE", {"symbol": "QQQ"}),
-    "gld": ("GLOBAL_QUOTE", {"symbol": "GLD"}),
-    "vixy": ("GLOBAL_QUOTE", {"symbol": "VIXY"}),
     "aud_usd": ("FX_DAILY", {"from_symbol": "AUD", "to_symbol": "USD"}),
     "us_10y_yield": (
         "TREASURY_YIELD",
