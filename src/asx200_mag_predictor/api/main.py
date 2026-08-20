@@ -1,5 +1,9 @@
 """FastAPI application entrypoint."""
 
+from __future__ import annotations
+
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -15,6 +19,7 @@ from asx200_mag_predictor.storage.models import init_db
 
 settings = get_settings()
 setup_logging(settings)
+logger = logging.getLogger("asx200_mag_predictor.api")
 
 
 def _wire_yahoo_fallback() -> None:
@@ -25,38 +30,72 @@ def _wire_yahoo_fallback() -> None:
 
         fetchers_mod._yf_download = yf_download  # type: ignore[attr-defined]
     except Exception as exc:  # noqa: BLE001
-        import logging
-
-        logging.getLogger("asx200_mag_predictor.api").warning(
-            "Could not wire Yahoo chart fallback: %s", exc
-        )
+        logger.warning("Could not wire Yahoo chart fallback: %s", exc)
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Initialise DB, seed ML models if missing, and start the daily scheduler."""
-    init_db(settings)
-    _wire_yahoo_fallback()
+def _train_ml_sync(months: int = 12) -> dict:
+    """Train hybrid ML models onto DATA_DIR (ephemeral on free tier)."""
+    from asx200_mag_predictor.scoring.ml import HybridML, MLTrainer
+
+    trainer = MLTrainer(settings=settings)
+    result = trainer.run(period=f"{months}mo")
+    hybrid = HybridML(settings=settings)
+    if hasattr(hybrid, "reload"):
+        hybrid.reload()
+    else:
+        hybrid._load()  # type: ignore[attr-defined]
+    out = dict(result or {})
+    out["ml_available"] = hybrid.available
+    out["model_dir"] = str(hybrid.model_dir)
+    return out
+
+
+async def _ensure_ml_models() -> None:
+    """Seed or auto-train so ml_available becomes true after cold starts.
+
+    Free Render plans have no persistent disk, so models live only for the
+    process lifetime. We therefore train in a background task when missing.
+    """
     try:
-        import logging
-
         from asx200_mag_predictor.scoring.ml import HybridML
         from asx200_mag_predictor.scoring.seed_provision import ensure_seed_ml_models
 
         seeded = ensure_seed_ml_models(settings=settings)
         hybrid = HybridML(settings=settings)
-        logging.getLogger("asx200_mag_predictor.api").info(
+        logger.info(
             "ML models on startup: available=%s seeded=%s dir=%s",
             hybrid.available,
             seeded,
             hybrid.model_dir,
         )
-    except Exception as exc:  # noqa: BLE001
-        import logging
+        if hybrid.available:
+            return
 
-        logging.getLogger("asx200_mag_predictor.api").warning(
-            "ML seed/load on startup failed: %s", exc
-        )
+        logger.info("ML models missing — starting background train (12mo)")
+
+        def _run() -> None:
+            try:
+                out = _train_ml_sync(months=12)
+                logger.info(
+                    "Background ML train finished: status=%s ml_available=%s rows=%s",
+                    out.get("status"),
+                    out.get("ml_available"),
+                    out.get("rows"),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Background ML train failed: %s", exc)
+
+        asyncio.get_running_loop().run_in_executor(None, _run)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ML seed/load on startup failed: %s", exc)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialise DB, ensure ML models, and start the daily scheduler."""
+    init_db(settings)
+    _wire_yahoo_fallback()
+    await _ensure_ml_models()
     scheduler = start_scheduler(settings)
     yield
     scheduler.shutdown()
