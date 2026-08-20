@@ -1992,7 +1992,7 @@ class ScoringEngine:
         return max(0.2, min(1.0, base_conf - penalty))
 
     def _mcp_sources_used(self, fv: FeatureVector) -> list[str]:
-        """Return the optional MCP enrichers that contributed data for this prediction."""
+        """Return the optional MCP enrichers that successfully contributed data."""
         mcp_names = {"tradingview", "alpha_vantage", "news_sentiment", "options_positioning"}
         used: set[str] = set()
         for s in fv.source_status or []:
@@ -2005,7 +2005,7 @@ class ScoringEngine:
             else:
                 name = getattr(s, "name", "")
                 status = getattr(s, "status", "")
-            if name in mcp_names and status in ("ok", "degraded"):
+            if name in mcp_names and status == "ok":
                 used.add(name)
         return sorted(used)
 
