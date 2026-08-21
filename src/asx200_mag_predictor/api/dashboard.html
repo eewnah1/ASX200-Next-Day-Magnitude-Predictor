@@ -436,6 +436,25 @@
           <div class="card" style="flex:1;min-width:140px;"><h2>Baseline up-rate</h2><div class="big">${(overall.baseline_up_rate * 100).toFixed(1)}%</div></div>
         </div>`;
 
+        if (s.binary) {
+          const b = s.binary;
+          html += `<div style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:12px;">
+            <div class="card" style="flex:1;min-width:140px;"><h2>Binary accuracy</h2><div class="big" style="color:var(--low);">${(b.directional_accuracy * 100).toFixed(1)}%</div></div>
+            <div class="card" style="flex:1;min-width:140px;"><h2>Binary AUC</h2><div class="big">${b.auc ? (b.auc * 100).toFixed(1) + '%' : '-'}</div></div>
+          </div>`;
+          if (b.threshold_sweep) {
+            const up = (b.threshold_sweep.up || []).slice(0, 5);
+            const down = (b.threshold_sweep.down || []).slice(0, 5);
+            html += '<h3 style="color:var(--muted);">Binary threshold sweep (top)</h3><table><thead><tr><th>Threshold</th><th>Up signals</th><th>Up acc</th><th>Down signals</th><th>Down acc</th></tr></thead><tbody>';
+            for (let i = 0; i < Math.max(up.length, down.length); i++) {
+              const u = up[i] || {};
+              const d = down[i] || {};
+              html += `<tr><td>${u.threshold || d.threshold || '-'}</td><td>${u.signals || '-'}</td><td>${u.directional_accuracy !== undefined ? (u.directional_accuracy * 100).toFixed(1) + '%' : '-'}</td><td>${d.signals || '-'}</td><td>${d.directional_accuracy !== undefined ? (d.directional_accuracy * 100).toFixed(1) + '%' : '-'}</td></tr>`;
+            }
+            html += '</tbody></table>';
+          }
+        }
+
         if (s.pre_market_overlay) {
           const pm = s.pre_market_overlay;
           html += `<h3 style="color:var(--muted);">Pre-market overlay</h3><p>${pm.rule}<br><span class="tag tag-bullish">Large Up</span> ${pm.signals} signals, ${(pm.directional_accuracy * 100).toFixed(1)}% accuracy, mean ${pm.mean_return_pct >= 0 ? '+' : ''}${pm.mean_return_pct.toFixed(2)}%</p>`;

@@ -156,10 +156,29 @@ def run_backtest(
             for c in class_order:
                 prob_df.loc[idx, c] = probs.get(c, 0.0)
 
+    # Binary direction model (Up vs Down) cross-validation on the same folds.
+    bin_order = ["Down", "Up"]
+    bin_prob_df = pd.DataFrame(index=rows.index, columns=bin_order, dtype=float)
+    y_bin = np.where(rows["actual"].values > 0, "Up", "Down")
+    for train_idx, test_idx in tscv.split(x):
+        x_train, x_test = x[train_idx], x[test_idx]
+        y_train_bin = y_bin[train_idx]
+
+        bin_model = MLModel("binary", kind="gbm")
+        bin_model.fit(x_train, y_train_bin, mapper.feature_names)
+
+        fold_probs = bin_model.predict_proba(x_test)
+        fold_test_idx = rows.index[test_idx]
+        for i, idx in enumerate(fold_test_idx):
+            probs = fold_probs[i]
+            for c in bin_order:
+                bin_prob_df.loc[idx, c] = probs.get(c, 0.0)
+
     # Only rows that were part of an out-of-sample test fold have probabilities.
     aligned = rows.copy()
     aligned[class_order] = prob_df[class_order].values
-    aligned = aligned.dropna(subset=class_order)
+    aligned[bin_order] = bin_prob_df[bin_order].values
+    aligned = aligned.dropna(subset=class_order + bin_order)
     aligned["pred"] = aligned[class_order].idxmax(axis=1)
 
     # Overall metrics on the out-of-sample set.
@@ -169,12 +188,26 @@ def run_backtest(
     up_rate = float((aligned["actual"] > 0).mean())
     mean_return = float(aligned["actual"].mean())
 
+    # Binary metrics (threshold 0.5).
+    bin_pred = np.where(aligned["Up"] >= 0.5, "Up", "Down")
+    bin_pred_sign = np.where(bin_pred == "Up", 1, -1)
+    bin_directional_acc = float((np.sign(aligned["actual"]) == bin_pred_sign).mean())
+    bin_auc: float | None = None
+    try:
+        from sklearn.metrics import roc_auc_score
+
+        bin_auc = float(roc_auc_score((aligned["actual"] > 0).astype(int), aligned["Up"].values))
+    except Exception:
+        bin_auc = None
+
     # Threshold sweeps.
     thresholds = [0.95, 0.90, 0.85, 0.80, 0.75, 0.70, 0.65, 0.60, 0.55, 0.50]
     up_sweep = _sweep(aligned[class_order], aligned["actual"], "Large Up", "up", thresholds)
     down_sweep = _sweep(
         aligned[class_order], aligned["actual"], "Large Down", "down", thresholds
     )
+    bin_up_sweep = _sweep(aligned[bin_order], aligned["actual"], "Up", "up", thresholds)
+    bin_down_sweep = _sweep(aligned[bin_order], aligned["actual"], "Down", "down", thresholds)
 
     # Select highest threshold that still exceeds 90% directional accuracy with >=5 signals.
     hc_up = next(
@@ -198,25 +231,54 @@ def run_backtest(
 
     selected_up_reaches_90 = hc_up is not None and hc_up["directional_accuracy"] >= 0.90
     selected_down_reaches_90 = hc_down is not None and hc_down["directional_accuracy"] >= 0.90
+    bin_hc_up = next(
+        (
+            s
+            for s in sorted(bin_up_sweep, key=lambda x: x["threshold"], reverse=True)
+            if s["directional_accuracy"] >= 0.90 and s["signals"] >= 5
+        ),
+        bin_up_sweep[-1] if bin_up_sweep else None,
+    )
+    bin_hc_down = next(
+        (
+            s
+            for s in sorted(bin_down_sweep, key=lambda x: x["threshold"], reverse=True)
+            if s["directional_accuracy"] >= 0.90 and s["signals"] >= 5
+        ),
+        bin_down_sweep[-1] if bin_down_sweep else None,
+    )
+    bin_reaches_90 = (
+        (bin_hc_up is not None and bin_hc_up["directional_accuracy"] >= 0.90)
+        or (bin_hc_down is not None and bin_hc_down["directional_accuracy"] >= 0.90)
+    )
+
     if selected_up_reaches_90 or selected_down_reaches_90:
         note = (
             "High-confidence probability thresholds that exceed 90% directional accuracy "
             "were found for at least one side; signals are rare and the remaining days "
             "should be treated as 'stay put' (no switch)."
         )
+    elif bin_reaches_90:
+        note = (
+            "The dedicated binary Up/Down model found a probability threshold that exceeds "
+            "90% directional accuracy on this CSV. Use it as the pre-2PM switch signal; "
+            "all other days should be treated as 'stay put'."
+        )
     elif pre_market and pre_market["directional_accuracy"] >= 0.90:
         note = (
-            "The primary ML model does not reach 90% directional accuracy at any practical "
-            "probability threshold. The pre-market S&P 500 futures + VIX overlay did "
+            "Neither the 3-class nor the dedicated binary Up/Down model reaches 90% "
+            "directional accuracy at any practical threshold. "
+            "The pre-market S&P 500 futures + VIX overlay did "
             f"({pre_market['signals']} signals, {pre_market['directional_accuracy']:.1%} "
             "directional accuracy OOS) on this CSV. Treat other days as 'stay put'."
         )
     else:
         note = (
-            "The primary ML model does not reach 90% directional accuracy at any practical "
-            "probability threshold on this CSV. High-conviction switches require additional "
-            "overlays (daily-rates or pre-market futures/VIX) which only fire on a small "
-            "fraction of days. The remaining days should be treated as 'stay put'."
+            "Neither the 3-class nor the dedicated binary Up/Down model reaches 90% "
+            "directional accuracy at any practical threshold on this CSV. "
+            "High-conviction switches require additional overlays (daily-rates or "
+            "pre-market futures/VIX) which only fire on a small fraction of days. "
+            "The remaining days should be treated as 'stay put'."
         )
 
     summary = {
@@ -235,6 +297,25 @@ def run_backtest(
             "directional_accuracy": round(directional_acc, 4),
             "baseline_up_rate": round(up_rate, 4),
             "mean_next_return_pct": round(mean_return, 4),
+        },
+        "binary": {
+            "directional_accuracy": round(bin_directional_acc, 4),
+            "auc": round(bin_auc, 4) if bin_auc is not None else None,
+            "baseline_up_rate": round(up_rate, 4),
+            "mean_next_return_pct": round(mean_return, 4),
+            "high_confidence": {
+                "up_threshold": bin_hc_up,
+                "down_threshold": bin_hc_down,
+            },
+            "threshold_sweep": {
+                "up": bin_up_sweep,
+                "down": bin_down_sweep,
+            },
+            "note": (
+                "A dedicated Up/Down classifier is trained because the trading decision "
+                "only needs the sign of tomorrow's ASX 200 return. It typically beats the "
+                "3-class model on directional accuracy."
+            ),
         },
         "high_confidence": {
             "up_threshold": hc_up,

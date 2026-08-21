@@ -277,13 +277,14 @@ class MLModel:
 
     def _pick_classifier(self, n_classes: int):
         """Prefer LightGBM, then XGBoost, then sklearn HistGradient, then LogisticRegression."""
+        is_binary = n_classes == 2
         for pkg, cls_name in [("lightgbm", "LGBMClassifier"), ("xgboost", "XGBClassifier")]:
             try:
                 module = __import__(pkg, fromlist=[cls_name])
                 cls = getattr(module, cls_name)
                 if pkg == "lightgbm":
                     return cls(
-                        objective="multiclass",
+                        objective="binary" if is_binary else "multiclass",
                         n_estimators=200,
                         learning_rate=0.05,
                         num_leaves=31,
@@ -297,8 +298,8 @@ class MLModel:
                     )
                 if pkg == "xgboost":
                     return cls(
-                        objective="multi:softprob",
-                        eval_metric="mlogloss",
+                        objective="binary:logistic" if is_binary else "multi:softprob",
+                        eval_metric="logloss" if is_binary else "mlogloss",
                         n_estimators=200,
                         max_depth=4,
                         learning_rate=0.05,
@@ -314,7 +315,7 @@ class MLModel:
             pass
         from sklearn.linear_model import LogisticRegression
 
-        return LogisticRegression(max_iter=1000, multi_class="multinomial")
+        return LogisticRegression(max_iter=1000, multi_class="auto")
 
     def fit(self, x: np.ndarray, y: np.ndarray, feature_names: list[str]) -> dict[str, Any]:
         labels = sorted(set(y))
@@ -934,6 +935,14 @@ class MLTrainer:
         primary = MLModel("primary", kind="gbm")
         primary_cv = primary.fit(x, df["primary_label"].values, mapper.feature_names)
 
+        # Binary direction model: the user only needs positive/negative tomorrow,
+        # so a dedicated Up/Down classifier is usually more accurate than a
+        # 3-class model evaluated on direction.
+        binary_label = np.where(df["next_return_pct"].values > 0, "Up", "Down")
+        binary = MLModel("binary", kind="gbm")
+        binary_cv = binary.fit(x, binary_label, mapper.feature_names)
+        binary.save(self.model_dir / "binary.pkl")
+
         neutral = df[df["primary_label"] == "Neutral"].copy()
         secondary: MLModel | None = None
         secondary_cv = None
@@ -960,6 +969,7 @@ class MLTrainer:
             if not neutral.empty
             else {},
             "primary_cv": primary_cv,
+            "binary_cv": binary_cv,
             "secondary_cv": secondary_cv,
             "features": mapper.feature_names,
         }
@@ -983,6 +993,7 @@ class HybridML:
         self.mapper: MLFeatureMapper | None = None
         self.primary: MLModel | None = None
         self.secondary: MLModel | None = None
+        self.binary: MLModel | None = None
         self.available = False
         self._load()
 
@@ -992,6 +1003,7 @@ class HybridML:
             self.mapper = MLFeatureMapper.load(mapper_path)
         self.primary = MLModel.load(self.model_dir / "primary.pkl")
         self.secondary = MLModel.load(self.model_dir / "secondary.pkl")
+        self.binary = MLModel.load(self.model_dir / "binary.pkl")
         self.available = bool(self.mapper and self.primary)
 
     def primary_probs(self, fv: FeatureVector) -> dict[str, float] | None:
@@ -1005,6 +1017,13 @@ class HybridML:
             return None
         x = self.mapper.transform_one(fv).reshape(1, -1)
         return self.secondary.predict_proba(x)
+
+    def binary_probs(self, fv: FeatureVector) -> dict[str, float] | None:
+        """Return P(Up) / P(Down) from a dedicated binary direction model."""
+        if not self.available or self.binary is None or self.mapper is None:
+            return None
+        x = self.mapper.transform_one(fv).reshape(1, -1)
+        return self.binary.predict_proba(x)
 
     def feature_importance(self, top: int = 10) -> list[dict[str, Any]]:
         if self.primary:

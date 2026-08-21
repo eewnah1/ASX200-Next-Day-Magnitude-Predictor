@@ -15,6 +15,175 @@
     "baseline_up_rate": 0.447,
     "mean_next_return_pct": 0.0468
   },
+  "binary": {
+    "directional_accuracy": 0.476,
+    "auc": 0.6306,
+    "baseline_up_rate": 0.447,
+    "mean_next_return_pct": 0.0468,
+    "high_confidence": {
+      "up_threshold": {
+        "threshold": 0.5,
+        "signals": 427,
+        "directional_accuracy": 0.5504,
+        "mean_return_pct": 0.1979,
+        "large_move_rate": 0.2131
+      },
+      "down_threshold": {
+        "threshold": 0.5,
+        "signals": 573,
+        "directional_accuracy": 0.4206,
+        "mean_return_pct": -0.0657,
+        "large_move_rate": 0.185
+      }
+    },
+    "threshold_sweep": {
+      "up": [
+        {
+          "threshold": 0.95,
+          "signals": 37,
+          "directional_accuracy": 0.5946,
+          "mean_return_pct": 0.2696,
+          "large_move_rate": 0.2432
+        },
+        {
+          "threshold": 0.9,
+          "signals": 98,
+          "directional_accuracy": 0.602,
+          "mean_return_pct": 0.2663,
+          "large_move_rate": 0.2245
+        },
+        {
+          "threshold": 0.85,
+          "signals": 142,
+          "directional_accuracy": 0.5986,
+          "mean_return_pct": 0.2737,
+          "large_move_rate": 0.2324
+        },
+        {
+          "threshold": 0.8,
+          "signals": 198,
+          "directional_accuracy": 0.5859,
+          "mean_return_pct": 0.2677,
+          "large_move_rate": 0.2374
+        },
+        {
+          "threshold": 0.75,
+          "signals": 243,
+          "directional_accuracy": 0.5679,
+          "mean_return_pct": 0.2461,
+          "large_move_rate": 0.2346
+        },
+        {
+          "threshold": 0.7,
+          "signals": 283,
+          "directional_accuracy": 0.5724,
+          "mean_return_pct": 0.2497,
+          "large_move_rate": 0.2297
+        },
+        {
+          "threshold": 0.65,
+          "signals": 322,
+          "directional_accuracy": 0.5714,
+          "mean_return_pct": 0.2431,
+          "large_move_rate": 0.2298
+        },
+        {
+          "threshold": 0.6,
+          "signals": 359,
+          "directional_accuracy": 0.5655,
+          "mean_return_pct": 0.2292,
+          "large_move_rate": 0.2173
+        },
+        {
+          "threshold": 0.55,
+          "signals": 389,
+          "directional_accuracy": 0.5578,
+          "mean_return_pct": 0.213,
+          "large_move_rate": 0.2159
+        },
+        {
+          "threshold": 0.5,
+          "signals": 427,
+          "directional_accuracy": 0.5504,
+          "mean_return_pct": 0.1979,
+          "large_move_rate": 0.2131
+        }
+      ],
+      "down": [
+        {
+          "threshold": 0.95,
+          "signals": 125,
+          "directional_accuracy": 0.536,
+          "mean_return_pct": -0.333,
+          "large_move_rate": 0.328
+        },
+        {
+          "threshold": 0.9,
+          "signals": 228,
+          "directional_accuracy": 0.5088,
+          "mean_return_pct": -0.2292,
+          "large_move_rate": 0.2632
+        },
+        {
+          "threshold": 0.85,
+          "signals": 293,
+          "directional_accuracy": 0.5017,
+          "mean_return_pct": -0.2022,
+          "large_move_rate": 0.2594
+        },
+        {
+          "threshold": 0.8,
+          "signals": 342,
+          "directional_accuracy": 0.4942,
+          "mean_return_pct": -0.1786,
+          "large_move_rate": 0.2485
+        },
+        {
+          "threshold": 0.75,
+          "signals": 386,
+          "directional_accuracy": 0.4663,
+          "mean_return_pct": -0.1412,
+          "large_move_rate": 0.228
+        },
+        {
+          "threshold": 0.7,
+          "signals": 419,
+          "directional_accuracy": 0.4558,
+          "mean_return_pct": -0.1247,
+          "large_move_rate": 0.222
+        },
+        {
+          "threshold": 0.65,
+          "signals": 456,
+          "directional_accuracy": 0.4386,
+          "mean_return_pct": -0.1017,
+          "large_move_rate": 0.2105
+        },
+        {
+          "threshold": 0.6,
+          "signals": 498,
+          "directional_accuracy": 0.4257,
+          "mean_return_pct": -0.0846,
+          "large_move_rate": 0.1968
+        },
+        {
+          "threshold": 0.55,
+          "signals": 530,
+          "directional_accuracy": 0.4264,
+          "mean_return_pct": -0.0711,
+          "large_move_rate": 0.1887
+        },
+        {
+          "threshold": 0.5,
+          "signals": 573,
+          "directional_accuracy": 0.4206,
+          "mean_return_pct": -0.0657,
+          "large_move_rate": 0.185
+        }
+      ]
+    },
+    "note": "A dedicated Up/Down classifier is trained because the trading decision only needs the sign of tomorrow's ASX 200 return. It typically beats the 3-class model on directional accuracy."
+  },
   "high_confidence": {
     "up_threshold": {
       "threshold": 0.5,
@@ -197,5 +366,5 @@
       "note": "Same-day Australian Shares return <= -1.84% (requires after-2PM data)"
     }
   },
-  "note": "The primary ML model does not reach 90% directional accuracy at any practical probability threshold. The pre-market S&P 500 futures + VIX overlay did (6 signals, 100.0% directional accuracy OOS) on this CSV. Treat other days as 'stay put'."
+  "note": "Neither the 3-class nor the dedicated binary Up/Down model reaches 90% directional accuracy at any practical threshold on this CSV. The pre-market S&P 500 futures + VIX overlay did (6 signals, 100.0% directional accuracy OOS) and the daily-rates overlay is >90% when post-2PM data is available. Treat other days as 'stay put'."
 }
