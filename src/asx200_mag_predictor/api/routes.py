@@ -408,3 +408,24 @@ async def debug_seed(csv_path: str = "/data/uploads/placeholder.csv") -> dict[st
         "seed": str(seed),
         "seed_exists": seed.is_file() if seed else False,
     }
+
+
+@router.get("/debug/seeds")
+async def debug_seeds() -> dict[str, Any]:
+    """List bundled seed cache and model directories."""
+    candidates = [
+        Path(__file__).resolve().parent.parent / "data" / "seed_csv_cache",
+        Path("src/asx200_mag_predictor/data/seed_csv_cache"),
+    ]
+    files: list[str] = []
+    for c in candidates:
+        if c.is_dir():
+            files += [str(p.name) for p in c.glob("*.parquet")]
+    settings = get_settings()
+    return {
+        "seed_candidates": [str(c) for c in candidates],
+        "seed_parquet_files": files,
+        "data_dir": str(settings.data_dir),
+        "ml_model_dir": str(settings.ml_model_dir),
+        "ml_model_dir_exists": settings.ml_model_dir.is_dir(),
+    }
