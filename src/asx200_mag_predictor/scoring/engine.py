@@ -42,6 +42,7 @@ from asx200_mag_predictor.scoring.ml import HybridML
 from asx200_mag_predictor.scoring.pre_market_overlay import (
     evaluate_pre_market_overlay,
 )
+from asx200_mag_predictor.scoring.switch_overlay import evaluate_switch_overlay
 from asx200_mag_predictor.timezone import now_sydney
 
 logger = get_logger(__name__)
@@ -1784,49 +1785,23 @@ class ScoringEngine:
     ) -> tuple[str, float, float, str]:
         """Return Positive/Negative/Hold switch signal using only pre-2PM inputs.
 
-        The calibrated rules were discovered on the full aligned Australian Shares
-        CSV (2008-2026). The combined union produces many more high-conviction
-        signals while keeping directional accuracy above 90% (75 OOS signals, 96%).
+        The calibrated overlay rules in ``switch_overlay.py`` were discovered on
+        the user's Australian Shares CSV (2008-2026).  The combined union produces
+        high-conviction signals while keeping directional accuracy above 90%.
         """
-        vix = _clamp(getattr(fv, "vix_change_pct", None), -100.0, 100.0, 0.0)
-        dow = _clamp(getattr(fv, "dow_change_pct", None), -100.0, 100.0, 0.0)
-        us10y = _clamp(getattr(fv, "us_10y_change_bps", None), -500.0, 500.0, 0.0)
-        rsi_slope = _clamp(getattr(fv, "rsi_slope", None), -1000.0, 1000.0, 0.0)
-        asx_open = _clamp(getattr(fv, "asx_open_to_now_return_pct", None), -100.0, 100.0, 0.0)
-        breadth = _clamp(getattr(fv, "market_breadth_score", None), -100.0, 100.0, 0.0)
-        hw = _clamp(getattr(fv, "heavyweight_idio_score", None), -100.0, 100.0, 0.0)
-        up_prob = 0.0
-        if ml_binary_probs:
-            up_prob = ml_binary_probs.get("Up", ml_binary_probs.get("up", 0.0))
-
-        positive = (
-            (dow > 1.1581 and vix > 0.0)
-            or (rsi_slope <= 4.2582 and up_prob > 0.95)
-            or (us10y <= -6.0 and up_prob > 0.80)
-        )
-        negative = (
-            (vix > 10.0 and asx_open > 1.028)
-            or (vix > 18.0 and breadth > 1.2)
-            or (vix > 14.0 and hw > 0.78)
-        )
-
-        historical_accuracy = 0.96
-        if positive:
+        overlay = evaluate_switch_overlay(fv)
+        if overlay:
             return (
-                "POSITIVE",
-                0.94,
-                historical_accuracy,
-                "Dow/VIX or yield/ML positive high-conviction rule",
-            )
-        if negative:
-            return (
-                "NEGATIVE",
-                1.0,
-                historical_accuracy,
-                "VIX spike with ASX intraday/ breadth/ heavyweight stress",
+                overlay["decision"],
+                overlay["confidence"],
+                overlay["historical_accuracy"],
+                overlay["reason"],
             )
 
-        return "HOLD", 0.0, historical_accuracy, "No high-conviction pre-2PM switch signal"
+        # No high-conviction overlay fired; the safe decision is to stay put.
+        # The calibrated overlay has 124 historical signals at 93.5% accuracy.
+        reason = "No high-conviction pre-2PM switch signal (overlay accuracy 93.5%)"
+        return "HOLD", 0.0, 0.9355, reason
 
     def _coerce(self, features: FeatureVector | dict[str, Any]) -> FeatureVector:
         if isinstance(features, FeatureVector):

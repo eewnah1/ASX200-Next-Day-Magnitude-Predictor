@@ -27,6 +27,10 @@ from asx200_mag_predictor.scoring.ml import (
     MLFeatureMapper,
     MLModel,
 )
+from asx200_mag_predictor.scoring.switch_overlay import (
+    evaluate_switch_overlay_df,
+    switch_summary,
+)
 
 # Suppress verbose LightGBM / pandas warnings during batch training.
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -217,59 +221,15 @@ def _evaluate_by_year(aligned: pd.DataFrame) -> list[dict[str, Any]]:
 def _compute_switch_signal(aligned: pd.DataFrame) -> pd.Series:
     """Return a high-conviction positive/negative switch signal (1/-1/0) for each row.
 
-    The rules were calibrated on the full 2008-2026 Australian Shares CSV and use
-    only data available before 2 PM AEST.  The combined union is calibrated to
-    produce many more high-conviction signals while keeping directional accuracy
-    above 90%.
+    The rules are defined in ``switch_overlay.py`` and were calibrated on the
+    user's Australian Shares CSV (2008-2026) using only pre-2 PM data.
     """
-    vix = aligned["vix_change_pct"].fillna(0.0).values
-    dow = aligned["dow_change_pct"].fillna(0.0).values
-    us10y = aligned["us_10y_change_bps"].fillna(0.0).values
-    rsi_slope = aligned["rsi_slope"].fillna(0.0).values
-    asx_open = aligned["asx_open_to_now_return_pct"].fillna(0.0).values
-    breadth = aligned["market_breadth_score"].fillna(0.0).values
-    hw = aligned["heavyweight_idio_score"].fillna(0.0).values
-    up_prob = aligned["Up"].fillna(0.0).values
-    signal = np.zeros(len(aligned), dtype=int)
-
-    positive = (
-        ((dow > 1.1581) & (vix > 0.0))
-        | ((rsi_slope <= 4.2582) & (up_prob > 0.95))
-        | ((us10y <= -6.0) & (up_prob > 0.80))
-    )
-    negative = (
-        ((vix > 10.0) & (asx_open > 1.028))
-        | ((vix > 18.0) & (breadth > 1.2))
-        | ((vix > 14.0) & (hw > 0.78))
-    )
-
-    signal[positive] = 1
-    signal[negative] = -1
-    return pd.Series(signal, index=aligned.index)
+    return evaluate_switch_overlay_df(aligned)
 
 
 def _switch_signal_summary(aligned: pd.DataFrame) -> dict[str, Any]:
     """Return aggregate statistics for the high-conviction switch signal."""
-    sig = aligned["switch_signal"].values
-    mask = sig != 0
-    n = int(mask.sum())
-    if n == 0:
-        return {"signals": 0, "directional_accuracy": None, "mean_return_pct": None}
-    actual_sign = np.sign(aligned["actual"].values)
-    correct = actual_sign[mask] == sig[mask]
-    up_mask = sig == 1
-    down_mask = sig == -1
-    up_n = int(up_mask.sum())
-    down_n = int(down_mask.sum())
-    return {
-        "signals": n,
-        "directional_accuracy": round(float(correct.mean()), 4),
-        "mean_return_pct": round(float(aligned["actual"].values[mask].mean()), 4),
-        "up_signals": up_n,
-        "up_accuracy": round(float((actual_sign[up_mask] == 1).mean()), 4) if up_n else None,
-        "down_signals": down_n,
-        "down_accuracy": round(float((actual_sign[down_mask] == -1).mean()), 4) if down_n else None,
-    }
+    return switch_summary(aligned)
 
 
 def _set_labels_from_actual(rows: pd.DataFrame) -> pd.DataFrame:
