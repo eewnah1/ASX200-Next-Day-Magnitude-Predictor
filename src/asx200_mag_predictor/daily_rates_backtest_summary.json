@@ -1,184 +1,184 @@
 {
-  "csv_file": "Daily_Rates_01_Jul_2008_-_20_Aug_2026.csv",
+  "csv_file": "Daily_Rates_01_Jul_2008_-_20_Aug_2026_Australian_shares.csv",
   "target_column": "Australian Shares",
-  "period": "5y",
-  "n_rows_total": 1202,
-  "n_rows_tested": 1000,
+  "period": "max",
+  "n_rows_total": 4580,
+  "n_rows_tested": 3815,
   "n_features": 110,
   "date_range": {
-    "start": "2022-09-05 00:00:00",
+    "start": "2011-07-12 00:00:00",
     "end": "2026-08-18 00:00:00"
   },
   "overall": {
-    "three_class_accuracy": 0.745,
-    "directional_accuracy": 0.351,
-    "baseline_up_rate": 0.447,
-    "mean_next_return_pct": 0.0468
+    "three_class_accuracy": 0.7153,
+    "directional_accuracy": 0.3801,
+    "baseline_up_rate": 0.4359,
+    "mean_next_return_pct": 0.0388
   },
   "binary": {
-    "directional_accuracy": 0.476,
-    "auc": 0.6306,
-    "baseline_up_rate": 0.447,
-    "mean_next_return_pct": 0.0468,
+    "directional_accuracy": 0.4849,
+    "auc": 0.6623,
+    "baseline_up_rate": 0.4359,
+    "mean_next_return_pct": 0.0388,
     "high_confidence": {
       "up_threshold": {
         "threshold": 0.5,
-        "signals": 427,
-        "directional_accuracy": 0.5504,
-        "mean_return_pct": 0.1979,
-        "large_move_rate": 0.2131
+        "signals": 1419,
+        "directional_accuracy": 0.5835,
+        "mean_return_pct": 0.2834,
+        "large_move_rate": 0.3066
       },
       "down_threshold": {
         "threshold": 0.5,
-        "signals": 573,
-        "directional_accuracy": 0.4206,
-        "mean_return_pct": -0.0657,
-        "large_move_rate": 0.185
+        "signals": 2396,
+        "directional_accuracy": 0.4265,
+        "mean_return_pct": -0.1061,
+        "large_move_rate": 0.1982
       }
     },
     "threshold_sweep": {
       "up": [
         {
           "threshold": 0.95,
-          "signals": 37,
-          "directional_accuracy": 0.5946,
-          "mean_return_pct": 0.2696,
-          "large_move_rate": 0.2432
+          "signals": 19,
+          "directional_accuracy": 0.8421,
+          "mean_return_pct": 0.8684,
+          "large_move_rate": 0.6316
         },
         {
           "threshold": 0.9,
-          "signals": 98,
-          "directional_accuracy": 0.602,
-          "mean_return_pct": 0.2663,
-          "large_move_rate": 0.2245
+          "signals": 74,
+          "directional_accuracy": 0.6892,
+          "mean_return_pct": 0.6569,
+          "large_move_rate": 0.5
         },
         {
           "threshold": 0.85,
-          "signals": 142,
-          "directional_accuracy": 0.5986,
-          "mean_return_pct": 0.2737,
-          "large_move_rate": 0.2324
+          "signals": 144,
+          "directional_accuracy": 0.7014,
+          "mean_return_pct": 0.6074,
+          "large_move_rate": 0.5139
         },
         {
           "threshold": 0.8,
-          "signals": 198,
-          "directional_accuracy": 0.5859,
-          "mean_return_pct": 0.2677,
-          "large_move_rate": 0.2374
+          "signals": 259,
+          "directional_accuracy": 0.6795,
+          "mean_return_pct": 0.489,
+          "large_move_rate": 0.4788
         },
         {
           "threshold": 0.75,
-          "signals": 243,
-          "directional_accuracy": 0.5679,
-          "mean_return_pct": 0.2461,
-          "large_move_rate": 0.2346
+          "signals": 396,
+          "directional_accuracy": 0.6515,
+          "mean_return_pct": 0.4379,
+          "large_move_rate": 0.4268
         },
         {
           "threshold": 0.7,
-          "signals": 283,
-          "directional_accuracy": 0.5724,
-          "mean_return_pct": 0.2497,
-          "large_move_rate": 0.2297
+          "signals": 568,
+          "directional_accuracy": 0.6197,
+          "mean_return_pct": 0.3761,
+          "large_move_rate": 0.3768
         },
         {
           "threshold": 0.65,
-          "signals": 322,
-          "directional_accuracy": 0.5714,
-          "mean_return_pct": 0.2431,
-          "large_move_rate": 0.2298
+          "signals": 785,
+          "directional_accuracy": 0.6268,
+          "mean_return_pct": 0.3576,
+          "large_move_rate": 0.3643
         },
         {
           "threshold": 0.6,
-          "signals": 359,
-          "directional_accuracy": 0.5655,
-          "mean_return_pct": 0.2292,
-          "large_move_rate": 0.2173
+          "signals": 971,
+          "directional_accuracy": 0.6045,
+          "mean_return_pct": 0.3244,
+          "large_move_rate": 0.3347
         },
         {
           "threshold": 0.55,
-          "signals": 389,
-          "directional_accuracy": 0.5578,
-          "mean_return_pct": 0.213,
-          "large_move_rate": 0.2159
+          "signals": 1183,
+          "directional_accuracy": 0.5883,
+          "mean_return_pct": 0.3024,
+          "large_move_rate": 0.3204
         },
         {
           "threshold": 0.5,
-          "signals": 427,
-          "directional_accuracy": 0.5504,
-          "mean_return_pct": 0.1979,
-          "large_move_rate": 0.2131
+          "signals": 1419,
+          "directional_accuracy": 0.5835,
+          "mean_return_pct": 0.2834,
+          "large_move_rate": 0.3066
         }
       ],
       "down": [
         {
           "threshold": 0.95,
-          "signals": 125,
-          "directional_accuracy": 0.536,
-          "mean_return_pct": -0.333,
-          "large_move_rate": 0.328
+          "signals": 291,
+          "directional_accuracy": 0.646,
+          "mean_return_pct": -0.585,
+          "large_move_rate": 0.4399
         },
         {
           "threshold": 0.9,
-          "signals": 228,
-          "directional_accuracy": 0.5088,
-          "mean_return_pct": -0.2292,
-          "large_move_rate": 0.2632
+          "signals": 537,
+          "directional_accuracy": 0.5922,
+          "mean_return_pct": -0.4474,
+          "large_move_rate": 0.3669
         },
         {
           "threshold": 0.85,
-          "signals": 293,
-          "directional_accuracy": 0.5017,
-          "mean_return_pct": -0.2022,
-          "large_move_rate": 0.2594
+          "signals": 755,
+          "directional_accuracy": 0.5669,
+          "mean_return_pct": -0.3734,
+          "large_move_rate": 0.3338
         },
         {
           "threshold": 0.8,
-          "signals": 342,
-          "directional_accuracy": 0.4942,
-          "mean_return_pct": -0.1786,
-          "large_move_rate": 0.2485
+          "signals": 997,
+          "directional_accuracy": 0.5216,
+          "mean_return_pct": -0.2899,
+          "large_move_rate": 0.2979
         },
         {
           "threshold": 0.75,
-          "signals": 386,
-          "directional_accuracy": 0.4663,
-          "mean_return_pct": -0.1412,
-          "large_move_rate": 0.228
+          "signals": 1228,
+          "directional_accuracy": 0.5065,
+          "mean_return_pct": -0.2488,
+          "large_move_rate": 0.2736
         },
         {
           "threshold": 0.7,
-          "signals": 419,
-          "directional_accuracy": 0.4558,
-          "mean_return_pct": -0.1247,
-          "large_move_rate": 0.222
+          "signals": 1476,
+          "directional_accuracy": 0.4831,
+          "mean_return_pct": -0.2069,
+          "large_move_rate": 0.2547
         },
         {
           "threshold": 0.65,
-          "signals": 456,
-          "directional_accuracy": 0.4386,
-          "mean_return_pct": -0.1017,
-          "large_move_rate": 0.2105
+          "signals": 1705,
+          "directional_accuracy": 0.4698,
+          "mean_return_pct": -0.1765,
+          "large_move_rate": 0.2381
         },
         {
           "threshold": 0.6,
-          "signals": 498,
-          "directional_accuracy": 0.4257,
-          "mean_return_pct": -0.0846,
-          "large_move_rate": 0.1968
+          "signals": 1941,
+          "directional_accuracy": 0.4523,
+          "mean_return_pct": -0.1521,
+          "large_move_rate": 0.2231
         },
         {
           "threshold": 0.55,
-          "signals": 530,
-          "directional_accuracy": 0.4264,
-          "mean_return_pct": -0.0711,
-          "large_move_rate": 0.1887
+          "signals": 2178,
+          "directional_accuracy": 0.4371,
+          "mean_return_pct": -0.1256,
+          "large_move_rate": 0.2107
         },
         {
           "threshold": 0.5,
-          "signals": 573,
-          "directional_accuracy": 0.4206,
-          "mean_return_pct": -0.0657,
-          "large_move_rate": 0.185
+          "signals": 2396,
+          "directional_accuracy": 0.4265,
+          "mean_return_pct": -0.1061,
+          "large_move_rate": 0.1982
         }
       ]
     },
@@ -187,155 +187,169 @@
   "high_confidence": {
     "up_threshold": {
       "threshold": 0.5,
-      "signals": 27,
-      "directional_accuracy": 0.6296,
-      "mean_return_pct": 0.4564,
-      "large_move_rate": 0.3333
+      "signals": 218,
+      "directional_accuracy": 0.6743,
+      "mean_return_pct": 0.5742,
+      "large_move_rate": 0.5092
     },
     "down_threshold": {
       "threshold": 0.5,
-      "signals": 23,
-      "directional_accuracy": 0.6087,
-      "mean_return_pct": -0.3065,
-      "large_move_rate": 0.3478
+      "signals": 212,
+      "directional_accuracy": 0.6509,
+      "mean_return_pct": -0.6988,
+      "large_move_rate": 0.5142
     }
   },
   "threshold_sweep": {
     "large_up": [
       {
         "threshold": 0.95,
-        "signals": 2,
-        "directional_accuracy": 0.5,
-        "mean_return_pct": 1.932,
-        "large_move_rate": 0.5
+        "signals": 3,
+        "directional_accuracy": 0.3333,
+        "mean_return_pct": 0.2897,
+        "large_move_rate": 0.3333
       },
       {
         "threshold": 0.9,
-        "signals": 3,
-        "directional_accuracy": 0.6667,
-        "mean_return_pct": 1.9591,
-        "large_move_rate": 0.6667
+        "signals": 11,
+        "directional_accuracy": 0.4545,
+        "mean_return_pct": 0.2905,
+        "large_move_rate": 0.2727
       },
       {
         "threshold": 0.85,
-        "signals": 6,
-        "directional_accuracy": 0.5,
-        "mean_return_pct": 1.1117,
-        "large_move_rate": 0.5
+        "signals": 22,
+        "directional_accuracy": 0.6364,
+        "mean_return_pct": 0.7313,
+        "large_move_rate": 0.4545
       },
       {
         "threshold": 0.8,
-        "signals": 8,
-        "directional_accuracy": 0.625,
-        "mean_return_pct": 1.071,
-        "large_move_rate": 0.625
+        "signals": 44,
+        "directional_accuracy": 0.7045,
+        "mean_return_pct": 0.5867,
+        "large_move_rate": 0.5455
       },
       {
         "threshold": 0.75,
-        "signals": 10,
-        "directional_accuracy": 0.7,
-        "mean_return_pct": 0.9995,
-        "large_move_rate": 0.6
+        "signals": 65,
+        "directional_accuracy": 0.7385,
+        "mean_return_pct": 0.6709,
+        "large_move_rate": 0.5692
       },
       {
         "threshold": 0.7,
-        "signals": 12,
-        "directional_accuracy": 0.75,
-        "mean_return_pct": 0.9311,
-        "large_move_rate": 0.5833
+        "signals": 90,
+        "directional_accuracy": 0.6778,
+        "mean_return_pct": 0.5936,
+        "large_move_rate": 0.5333
       },
       {
         "threshold": 0.65,
-        "signals": 13,
-        "directional_accuracy": 0.6923,
-        "mean_return_pct": 0.8594,
-        "large_move_rate": 0.5385
+        "signals": 120,
+        "directional_accuracy": 0.65,
+        "mean_return_pct": 0.514,
+        "large_move_rate": 0.5
       },
       {
         "threshold": 0.6,
-        "signals": 16,
-        "directional_accuracy": 0.6875,
-        "mean_return_pct": 0.7467,
+        "signals": 138,
+        "directional_accuracy": 0.6594,
+        "mean_return_pct": 0.534,
         "large_move_rate": 0.5
       },
       {
         "threshold": 0.55,
-        "signals": 21,
-        "directional_accuracy": 0.619,
-        "mean_return_pct": 0.535,
-        "large_move_rate": 0.4286
+        "signals": 176,
+        "directional_accuracy": 0.6648,
+        "mean_return_pct": 0.533,
+        "large_move_rate": 0.4773
       },
       {
         "threshold": 0.5,
-        "signals": 27,
-        "directional_accuracy": 0.6296,
-        "mean_return_pct": 0.4564,
-        "large_move_rate": 0.3333
+        "signals": 218,
+        "directional_accuracy": 0.6743,
+        "mean_return_pct": 0.5742,
+        "large_move_rate": 0.5092
       }
     ],
     "large_down": [
       {
+        "threshold": 0.95,
+        "signals": 3,
+        "directional_accuracy": 0.6667,
+        "mean_return_pct": -0.6983,
+        "large_move_rate": 0.3333
+      },
+      {
+        "threshold": 0.9,
+        "signals": 11,
+        "directional_accuracy": 0.7273,
+        "mean_return_pct": -0.9932,
+        "large_move_rate": 0.6364
+      },
+      {
         "threshold": 0.85,
-        "signals": 1,
-        "directional_accuracy": 1.0,
-        "mean_return_pct": -1.5035,
-        "large_move_rate": 1.0
+        "signals": 29,
+        "directional_accuracy": 0.7241,
+        "mean_return_pct": -0.823,
+        "large_move_rate": 0.5172
       },
       {
         "threshold": 0.8,
-        "signals": 2,
-        "directional_accuracy": 1.0,
-        "mean_return_pct": -0.8896,
-        "large_move_rate": 0.5
+        "signals": 49,
+        "directional_accuracy": 0.7143,
+        "mean_return_pct": -0.8333,
+        "large_move_rate": 0.551
       },
       {
         "threshold": 0.75,
-        "signals": 4,
-        "directional_accuracy": 1.0,
-        "mean_return_pct": -0.6044,
-        "large_move_rate": 0.25
+        "signals": 72,
+        "directional_accuracy": 0.6667,
+        "mean_return_pct": -0.7645,
+        "large_move_rate": 0.5139
       },
       {
         "threshold": 0.7,
-        "signals": 8,
-        "directional_accuracy": 0.625,
-        "mean_return_pct": -0.3876,
-        "large_move_rate": 0.25
+        "signals": 98,
+        "directional_accuracy": 0.6939,
+        "mean_return_pct": -0.8124,
+        "large_move_rate": 0.5204
       },
       {
         "threshold": 0.65,
-        "signals": 12,
-        "directional_accuracy": 0.5833,
-        "mean_return_pct": -0.317,
-        "large_move_rate": 0.25
+        "signals": 124,
+        "directional_accuracy": 0.6935,
+        "mean_return_pct": -0.7998,
+        "large_move_rate": 0.5242
       },
       {
         "threshold": 0.6,
-        "signals": 16,
-        "directional_accuracy": 0.6875,
-        "mean_return_pct": -0.3882,
-        "large_move_rate": 0.3125
+        "signals": 152,
+        "directional_accuracy": 0.6776,
+        "mean_return_pct": -0.7568,
+        "large_move_rate": 0.5197
       },
       {
         "threshold": 0.55,
-        "signals": 20,
-        "directional_accuracy": 0.65,
-        "mean_return_pct": -0.2774,
-        "large_move_rate": 0.35
+        "signals": 185,
+        "directional_accuracy": 0.6486,
+        "mean_return_pct": -0.6696,
+        "large_move_rate": 0.5081
       },
       {
         "threshold": 0.5,
-        "signals": 23,
-        "directional_accuracy": 0.6087,
-        "mean_return_pct": -0.3065,
-        "large_move_rate": 0.3478
+        "signals": 212,
+        "directional_accuracy": 0.6509,
+        "mean_return_pct": -0.6988,
+        "large_move_rate": 0.5142
       }
     ]
   },
   "pre_market_overlay": {
-    "signals": 6,
+    "signals": 10,
     "directional_accuracy": 1.0,
-    "mean_return_pct": 0.8278,
+    "mean_return_pct": 0.7133,
     "rule": "us_futures_change_pct > 1.2 AND vix_change_pct > 0.5"
   },
   "daily_rates_overlay": {
@@ -352,32 +366,354 @@
       "note": "Same-day Australian Shares return <= -1.84% (requires after-2PM data)"
     }
   },
-  "note": "Neither the 3-class nor the dedicated binary Up/Down model reaches 90% directional accuracy at any practical threshold. The pre-market S&P 500 futures + VIX overlay did (6 signals, 100.0% directional accuracy OOS) on this CSV. Treat other days as 'stay put'.",
+  "switch_signal": {
+    "signals": 22,
+    "directional_accuracy": 0.9545,
+    "mean_return_pct": -0.227,
+    "up_signals": 10,
+    "up_accuracy": 1.0,
+    "down_signals": 12,
+    "down_accuracy": 0.9167
+  },
+  "by_bin": [
+    {
+      "bin": "very_high_negative",
+      "range": "-inf to -2.0",
+      "n": 38,
+      "mean_return_pct": -2.7833,
+      "predicted_positive": 6,
+      "predicted_negative": 32,
+      "directional_accuracy": 0.8421,
+      "switch_signals": 2,
+      "switch_accuracy": 1.0,
+      "switch_mean_return_pct": -2.1656
+    },
+    {
+      "bin": "high_negative",
+      "range": "-2.0 to -1.0",
+      "n": 190,
+      "mean_return_pct": -1.3763,
+      "predicted_positive": 24,
+      "predicted_negative": 166,
+      "directional_accuracy": 0.8737,
+      "switch_signals": 3,
+      "switch_accuracy": 1.0,
+      "switch_mean_return_pct": -1.4174
+    },
+    {
+      "bin": "mildly_negative",
+      "range": "-1.0 to -0.5",
+      "n": 354,
+      "mean_return_pct": -0.6985,
+      "predicted_positive": 77,
+      "predicted_negative": 277,
+      "directional_accuracy": 0.7825,
+      "switch_signals": 3,
+      "switch_accuracy": 1.0,
+      "switch_mean_return_pct": -0.8587
+    },
+    {
+      "bin": "low_negative",
+      "range": "-0.5 to -0.2",
+      "n": 397,
+      "mean_return_pct": -0.3385,
+      "predicted_positive": 103,
+      "predicted_negative": 294,
+      "directional_accuracy": 0.7406,
+      "switch_signals": 3,
+      "switch_accuracy": 1.0,
+      "switch_mean_return_pct": -0.3585
+    },
+    {
+      "bin": "very_low_negative",
+      "range": "-0.2 to 0.0",
+      "n": 348,
+      "mean_return_pct": -0.0997,
+      "predicted_positive": 95,
+      "predicted_negative": 253,
+      "directional_accuracy": 0.727,
+      "switch_signals": 0,
+      "switch_accuracy": null,
+      "switch_mean_return_pct": null
+    },
+    {
+      "bin": "zero",
+      "range": "0",
+      "n": 825,
+      "mean_return_pct": 0.0,
+      "predicted_positive": 286,
+      "predicted_negative": 539,
+      "directional_accuracy": 0.0,
+      "switch_signals": 0,
+      "switch_accuracy": null,
+      "switch_mean_return_pct": null
+    },
+    {
+      "bin": "very_low_positive",
+      "range": "0.0 to 0.2",
+      "n": 407,
+      "mean_return_pct": 0.1019,
+      "predicted_positive": 157,
+      "predicted_negative": 250,
+      "directional_accuracy": 0.3857,
+      "switch_signals": 2,
+      "switch_accuracy": 0.5,
+      "switch_mean_return_pct": 0.0621
+    },
+    {
+      "bin": "low_positive",
+      "range": "0.2 to 0.5",
+      "n": 530,
+      "mean_return_pct": 0.3447,
+      "predicted_positive": 236,
+      "predicted_negative": 294,
+      "directional_accuracy": 0.4453,
+      "switch_signals": 2,
+      "switch_accuracy": 1.0,
+      "switch_mean_return_pct": 0.3239
+    },
+    {
+      "bin": "mild_positive",
+      "range": "0.5 to 1.0",
+      "n": 489,
+      "mean_return_pct": 0.7169,
+      "predicted_positive": 263,
+      "predicted_negative": 226,
+      "directional_accuracy": 0.5378,
+      "switch_signals": 5,
+      "switch_accuracy": 1.0,
+      "switch_mean_return_pct": 0.8165
+    },
+    {
+      "bin": "positive",
+      "range": "1.0 to 2.0",
+      "n": 203,
+      "mean_return_pct": 1.3049,
+      "predicted_positive": 147,
+      "predicted_negative": 56,
+      "directional_accuracy": 0.7241,
+      "switch_signals": 2,
+      "switch_accuracy": 1.0,
+      "switch_mean_return_pct": 1.1935
+    },
+    {
+      "bin": "very_positive",
+      "range": "2.0 to inf",
+      "n": 34,
+      "mean_return_pct": 2.7011,
+      "predicted_positive": 25,
+      "predicted_negative": 9,
+      "directional_accuracy": 0.7353,
+      "switch_signals": 0,
+      "switch_accuracy": null,
+      "switch_mean_return_pct": null
+    }
+  ],
+  "by_year": [
+    {
+      "year": 2011,
+      "n": 118,
+      "n_up": 46,
+      "n_down": 47,
+      "baseline_up_rate": 0.3898,
+      "binary_accuracy": 0.5254,
+      "switch_signals": 0,
+      "switch_accuracy": null,
+      "switch_mean_return_pct": null
+    },
+    {
+      "year": 2012,
+      "n": 251,
+      "n_up": 104,
+      "n_down": 90,
+      "baseline_up_rate": 0.4143,
+      "binary_accuracy": 0.4781,
+      "switch_signals": 0,
+      "switch_accuracy": null,
+      "switch_mean_return_pct": null
+    },
+    {
+      "year": 2013,
+      "n": 253,
+      "n_up": 108,
+      "n_down": 88,
+      "baseline_up_rate": 0.4269,
+      "binary_accuracy": 0.5138,
+      "switch_signals": 1,
+      "switch_accuracy": 1.0,
+      "switch_mean_return_pct": -0.3321
+    },
+    {
+      "year": 2014,
+      "n": 252,
+      "n_up": 106,
+      "n_down": 91,
+      "baseline_up_rate": 0.4206,
+      "binary_accuracy": 0.4643,
+      "switch_signals": 0,
+      "switch_accuracy": null,
+      "switch_mean_return_pct": null
+    },
+    {
+      "year": 2015,
+      "n": 254,
+      "n_up": 112,
+      "n_down": 88,
+      "baseline_up_rate": 0.4409,
+      "binary_accuracy": 0.5118,
+      "switch_signals": 1,
+      "switch_accuracy": 1.0,
+      "switch_mean_return_pct": -1.1978
+    },
+    {
+      "year": 2016,
+      "n": 253,
+      "n_up": 112,
+      "n_down": 88,
+      "baseline_up_rate": 0.4427,
+      "binary_accuracy": 0.4901,
+      "switch_signals": 1,
+      "switch_accuracy": 1.0,
+      "switch_mean_return_pct": 1.0662
+    },
+    {
+      "year": 2017,
+      "n": 251,
+      "n_up": 110,
+      "n_down": 87,
+      "baseline_up_rate": 0.4382,
+      "binary_accuracy": 0.4741,
+      "switch_signals": 0,
+      "switch_accuracy": null,
+      "switch_mean_return_pct": null
+    },
+    {
+      "year": 2018,
+      "n": 253,
+      "n_up": 102,
+      "n_down": 95,
+      "baseline_up_rate": 0.4032,
+      "binary_accuracy": 0.498,
+      "switch_signals": 0,
+      "switch_accuracy": null,
+      "switch_mean_return_pct": null
+    },
+    {
+      "year": 2019,
+      "n": 252,
+      "n_up": 121,
+      "n_down": 76,
+      "baseline_up_rate": 0.4802,
+      "binary_accuracy": 0.4087,
+      "switch_signals": 0,
+      "switch_accuracy": null,
+      "switch_mean_return_pct": null
+    },
+    {
+      "year": 2020,
+      "n": 255,
+      "n_up": 108,
+      "n_down": 94,
+      "baseline_up_rate": 0.4235,
+      "binary_accuracy": 0.498,
+      "switch_signals": 3,
+      "switch_accuracy": 1.0,
+      "switch_mean_return_pct": 0.3667
+    },
+    {
+      "year": 2021,
+      "n": 254,
+      "n_up": 112,
+      "n_down": 89,
+      "baseline_up_rate": 0.4409,
+      "binary_accuracy": 0.4803,
+      "switch_signals": 1,
+      "switch_accuracy": 1.0,
+      "switch_mean_return_pct": -2.2483
+    },
+    {
+      "year": 2022,
+      "n": 251,
+      "n_up": 114,
+      "n_down": 83,
+      "baseline_up_rate": 0.4542,
+      "binary_accuracy": 0.5179,
+      "switch_signals": 5,
+      "switch_accuracy": 1.0,
+      "switch_mean_return_pct": -0.7841
+    },
+    {
+      "year": 2023,
+      "n": 252,
+      "n_up": 115,
+      "n_down": 82,
+      "baseline_up_rate": 0.4563,
+      "binary_accuracy": 0.5079,
+      "switch_signals": 6,
+      "switch_accuracy": 0.8333,
+      "switch_mean_return_pct": 0.5293
+    },
+    {
+      "year": 2024,
+      "n": 254,
+      "n_up": 110,
+      "n_down": 88,
+      "baseline_up_rate": 0.4331,
+      "binary_accuracy": 0.5118,
+      "switch_signals": 3,
+      "switch_accuracy": 1.0,
+      "switch_mean_return_pct": -1.1662
+    },
+    {
+      "year": 2025,
+      "n": 253,
+      "n_up": 112,
+      "n_down": 87,
+      "baseline_up_rate": 0.4427,
+      "binary_accuracy": 0.4545,
+      "switch_signals": 0,
+      "switch_accuracy": null,
+      "switch_mean_return_pct": null
+    },
+    {
+      "year": 2026,
+      "n": 159,
+      "n_up": 71,
+      "n_down": 54,
+      "baseline_up_rate": 0.4465,
+      "binary_accuracy": 0.4214,
+      "switch_signals": 1,
+      "switch_accuracy": 1.0,
+      "switch_mean_return_pct": 0.8615
+    }
+  ],
+  "note": "Neither the 3-class nor the dedicated binary Up/Down model reaches 90% directional accuracy at any practical threshold. The pre-market S&P 500 futures + VIX overlay did (10 signals, 100.0% directional accuracy OOS) on this CSV. Treat other days as 'stay put'.",
+  "aligned_path": "data/csv_aligned_59932f5515d2_max.parquet",
   "training": {
     "status": "ok",
-    "trained_at": "2026-08-21T13:46:08.252794+10:00",
-    "rows": 1202,
-    "neutral_rows": 898,
+    "trained_at": "2026-08-21T17:41:13.512941+10:00",
+    "rows": 4580,
+    "neutral_rows": 3168,
     "primary_labels": {
-      "Neutral": 898,
-      "Large Up": 166,
-      "Large Down": 138
+      "Neutral": 3168,
+      "Large Up": 763,
+      "Large Down": 649
     },
     "secondary_labels": {
-      "True Neutral": 619,
-      "Mild Bullish Bias": 164,
-      "Mild Bearish Bias": 115
+      "True Neutral": 2237,
+      "Mild Bullish Bias": 536,
+      "Mild Bearish Bias": 395
     },
     "primary_cv": {
-      "walk_forward_accuracy": 0.745,
+      "walk_forward_accuracy": 0.7153,
       "folds": 5
     },
     "binary_cv": {
-      "walk_forward_accuracy": 0.596,
+      "walk_forward_accuracy": 0.6262,
       "folds": 5
     },
     "secondary_cv": {
-      "walk_forward_accuracy": 0.651,
+      "walk_forward_accuracy": 0.6811,
       "folds": 5
     },
     "features": [

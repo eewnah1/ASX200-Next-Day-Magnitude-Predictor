@@ -277,6 +277,12 @@ class Prediction(BaseModel):
     high_conviction_historical_accuracy: float | None = None
     high_conviction_reason: str | None = None
 
+    # Clean Positive / Negative / Hold switch decision for the user's 2 PM fund switch
+    switch_decision: str = "HOLD"  # POSITIVE | NEGATIVE | HOLD
+    switch_confidence: float | None = None
+    switch_historical_accuracy: float | None = None
+    switch_reason: str | None = None
+
     # Detected macro/sector regime
     regime: str = "contested"
     regime_confidence: float | None = None

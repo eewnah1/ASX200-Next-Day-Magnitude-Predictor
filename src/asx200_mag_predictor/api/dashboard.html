@@ -89,6 +89,12 @@
       <div id="confidence" class="big" style="color:var(--muted);">-</div>
       <div id="mlAgreement" style="color:var(--muted);font-size:0.9rem;margin-top:8px;">Rule / ML agreement: -</div>
     </div>
+    <div class="card" style="border:2px solid var(--muted);">
+      <h2>Switch decision</h2>
+      <div id="switchDecision" class="big" style="color:var(--muted);">-</div>
+      <div id="switchAccuracy" style="color:var(--muted);font-size:0.9rem;margin-top:8px;">Historical accuracy: -</div>
+      <div id="switchReason" style="color:var(--muted);font-size:0.85rem;margin-top:4px;">-</div>
+    </div>
   </div>
   <div id="generated" style="color:var(--muted);font-size:0.9rem;margin-bottom:8px;">Generated: -</div>
   <div id="dataAsOf" style="color:var(--muted);font-size:0.9rem;margin-bottom:24px;">Data as of: -</div>
@@ -121,7 +127,7 @@
       <div id="calendar">No calendar data.</div>
     </div>
     <div class="card" style="grid-column: 1 / -1;">
-      <h2>Daily-rates high-conviction backtest</h2>
+      <h2>High-conviction Positive / Negative / Hold backtest</h2>
       <div id="backtestSummary">Loading backtest summary...</div>
     </div>
 
@@ -332,6 +338,16 @@
       $('ruleScore').textContent = (p.primary_score || 0).toFixed(2);
       $('ruleScore').style.color = (p.primary_score || 0) > 0 ? 'var(--low)' : (p.primary_score || 0) < 0 ? 'var(--negative)' : 'var(--muted)';
       $('confidence').textContent = `${(p.confidence*100).toFixed(1)}%`;
+
+      const sw = p.switch_decision || 'HOLD';
+      const swConf = (p.switch_confidence || 0) * 100;
+      const swAcc = (p.switch_historical_accuracy || 0) * 100;
+      const swColor = sw === 'POSITIVE' ? 'var(--low)' : sw === 'NEGATIVE' ? 'var(--negative)' : 'var(--muted)';
+      $('switchDecision').textContent = sw;
+      $('switchDecision').style.color = swColor;
+      $('switchAccuracy').textContent = `Historical accuracy: ${swAcc.toFixed(1)}% (conf ${swConf.toFixed(0)}%)`;
+      $('switchReason').textContent = p.switch_reason || 'No high-conviction pre-2PM switch signal';
+
       $('generated').textContent = `Generated: ${fmtAest(p.generated_at)}`;
       $('dataAsOf').textContent = `Data as of: ${fmtAest(p.data_as_of || p.features.fetched_at)} (latest available)`;
 
