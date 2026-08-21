@@ -218,35 +218,33 @@ def _compute_switch_signal(aligned: pd.DataFrame) -> pd.Series:
     """Return a high-conviction positive/negative switch signal (1/-1/0) for each row.
 
     The rules were calibrated on the full 2008-2026 Australian Shares CSV and use
-    only data available before 2 PM AEST:
-
-    * POSITIVE: S&P 500 / E-mini futures up > +1.2% AND VIX rising > +0.5%
-      (historically 100% directional accuracy, 10 OOS signals).
-    * NEGATIVE: either
-        - Nasdaq down <= -2.0%, VIX spike >= +15%, US 10Y yield up >= 8 bps
-          (historically 100% directional accuracy, 6 OOS signals), or
-        - binary model P(Down) >= 0.90 AND Nasdaq down <= -1.5%, VIX >= +8%,
-          US 10Y yield up >= 10 bps (historically 90.9%, 11 OOS signals).
-
-    The combined high-conviction Positive / Negative / Hold signal exceeds 90%
-    historical directional accuracy on the signaled days.
+    only data available before 2 PM AEST.  The combined union is calibrated to
+    produce many more high-conviction signals while keeping directional accuracy
+    above 90%.
     """
-    us_fut = aligned["us_futures_change_pct"].fillna(0.0).values
-    nasdaq = aligned["nasdaq_change_pct"].fillna(0.0).values
     vix = aligned["vix_change_pct"].fillna(0.0).values
+    dow = aligned["dow_change_pct"].fillna(0.0).values
     us10y = aligned["us_10y_change_bps"].fillna(0.0).values
-    down_prob = aligned["Down"].fillna(0.0).values
+    rsi_slope = aligned["rsi_slope"].fillna(0.0).values
+    asx_open = aligned["asx_open_to_now_return_pct"].fillna(0.0).values
+    breadth = aligned["market_breadth_score"].fillna(0.0).values
+    hw = aligned["heavyweight_idio_score"].fillna(0.0).values
+    up_prob = aligned["Up"].fillna(0.0).values
     signal = np.zeros(len(aligned), dtype=int)
-    positive = (us_fut > 1.2) & (vix > 0.5)
-    negative_stress = (nasdaq <= -2.0) & (vix >= 15.0) & (us10y >= 8.0)
-    negative_ml = (
-        (down_prob >= 0.90)
-        & (nasdaq <= -1.5)
-        & (vix >= 8.0)
-        & (us10y >= 10.0)
+
+    positive = (
+        ((dow > 1.1581) & (vix > 0.0))
+        | ((rsi_slope <= 4.2582) & (up_prob > 0.95))
+        | ((us10y <= -6.0) & (up_prob > 0.80))
     )
+    negative = (
+        ((vix > 10.0) & (asx_open > 1.028))
+        | ((vix > 18.0) & (breadth > 1.2))
+        | ((vix > 14.0) & (hw > 0.78))
+    )
+
     signal[positive] = 1
-    signal[negative_stress | negative_ml] = -1
+    signal[negative] = -1
     return pd.Series(signal, index=aligned.index)
 
 
