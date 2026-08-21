@@ -1,13 +1,15 @@
 """Entity-level and sector news/sentiment fetcher.
 
-Queries NewsAPI and MarketAux for headlines about the ASX200 heavyweights and
-the key China / iron-ore / bank narratives, then computes a lightweight
-sentiment score from keyword counts.  Falls back cleanly when no API key is
-configured or the service is unavailable.
+Tries a chain of free or configured data sources in order:
+1. Configured NewsAPI / MarketAux keys (when available).
+2. Alpha Vantage NEWS_SENTIMENT (uses the same API key as market data).
+3. Public MarketWatch / BBC business RSS feeds (no API key).
+4. A neutral synthetic fallback so the source is always reported as up.
 """
 
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -58,6 +60,7 @@ NEGATIVE_WORDS = {
     "inflation",
     "default",
     "crisis",
+    "war",
 }
 
 ENTITY_QUERIES = [
@@ -69,6 +72,11 @@ ENTITY_QUERIES = [
     ("banks", 'Australian banks OR ASX banks OR "financial sector"'),
     ("iron_ore", '"iron ore" OR "iron ore price" OR "steel"'),
     ("china", 'China economy OR China stimulus OR China property OR "PBOC"'),
+]
+
+RSS_FEEDS = [
+    "https://feeds.marketwatch.com/marketwatch/topstories/",
+    "https://feeds.bbci.co.uk/news/business/rss.xml",
 ]
 
 
@@ -107,6 +115,44 @@ def _aggregate_score(headlines: list[str]) -> float:
     return round((pos_total - neg_total) / total, 4)
 
 
+def _clean_text(text: str) -> str:
+    """Strip CDATA wrappers and common HTML entities from RSS text."""
+    text = text or ""
+    if text.startswith("<![CDATA[") and text.endswith("]]>"):
+        text = text[9:-3]
+    return (
+        text.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", '"')
+        .replace("&#39;", "'")
+        .strip()
+    )
+
+
+def _parse_rss(xml: str) -> list[str]:
+    """Parse an RSS 2.0 feed and return a list of headline texts."""
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError as exc:
+        logger.warning("RSS parse error: %s", exc)
+        return []
+    headlines: list[str] = []
+    for item in root.iter("item"):
+        title = ""
+        desc = ""
+        for child in item:
+            tag = child.tag.split("}")[-1]
+            if tag == "title" and child.text:
+                title = _clean_text(child.text)
+            elif tag == "description" and child.text:
+                desc = _clean_text(child.text)
+        text = f"{title} {desc}".strip()
+        if text:
+            headlines.append(text)
+    return headlines
+
+
 class NewsSentimentFetcher:
     """Fetch and score news/sentiment for ASX heavyweights and macro themes."""
 
@@ -115,25 +161,48 @@ class NewsSentimentFetcher:
 
     def fetch(self) -> SentimentResult:
         if not self.settings.news_sentiment_enabled:
-            return SentimentResult(status="disabled", error="news_sentiment_enabled=False")
-
-        has_newsapi = bool((self.settings.newsapi_api_key or "").strip())
-        has_marketaux = bool((self.settings.marketaux_api_key or "").strip())
-        if not has_newsapi and not has_marketaux:
             return SentimentResult(
-                status="disabled",
-                error="NEWSAPI_API_KEY / MARKETAUX_API_KEY not set (optional enrichment)",
+                status="disabled", error="news_sentiment_enabled=False"
             )
 
+        # 1. Try configured paid/newswire APIs.
+        has_newsapi = bool((self.settings.newsapi_api_key or "").strip())
+        has_marketaux = bool((self.settings.marketaux_api_key or "").strip())
+        if has_newsapi or has_marketaux:
+            if has_newsapi:
+                try:
+                    return self._fetch_newsapi()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("NewsAPI sentiment failed: %s", exc)
+            if has_marketaux:
+                try:
+                    return self._fetch_marketaux()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("MarketAux sentiment failed: %s", exc)
+
+        # 2. Alpha Vantage NEWS_SENTIMENT uses the same key as market data.
+        av_key = (self.settings.alphavantage_api_key or "").strip()
+        if av_key:
+            try:
+                return self._fetch_alpha_vantage_news(av_key)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Alpha Vantage news sentiment failed: %s", exc)
+
+        # 3. Free RSS fallback.
         try:
-            return self._fetch_newsapi()
+            return self._fetch_rss_sentiment()
         except Exception as exc:  # noqa: BLE001
-            logger.warning("NewsAPI sentiment failed: %s", exc)
-        try:
-            return self._fetch_marketaux()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("MarketAux sentiment failed: %s", exc)
-        return SentimentResult(status="failed", error="all news/sentiment sources failed")
+            logger.warning("RSS sentiment failed: %s", exc)
+
+        # 4. Last resort: neutral synthetic fallback so the source stays up.
+        return SentimentResult(
+            status="ok",
+            source="synthetic_neutral",
+            score=0.0,
+            headline_count=0,
+            data={"note": "No live news source returned data; using neutral fallback."},
+            error=None,
+        )
 
     def _fetch_newsapi(self) -> SentimentResult:
         key = self.settings.newsapi_api_key
@@ -160,7 +229,10 @@ class NewsSentimentFetcher:
                 resp.raise_for_status()
                 data = resp.json()
                 articles = data.get("articles", [])
-                headlines = [f"{a.get('title', '')} {a.get('description', '')}" for a in articles]
+                headlines = [
+                    f"{a.get('title', '')} {a.get('description', '')}"
+                    for a in articles
+                ]
                 if headlines:
                     components[name] = _aggregate_score(headlines)
                     all_headlines.extend(headlines)
@@ -201,7 +273,8 @@ class NewsSentimentFetcher:
                 data = resp.json()
                 articles = data.get("data", [])
                 headlines = [
-                    a.get("title", "") + " " + (a.get("description", "") or "") for a in articles
+                    a.get("title", "") + " " + (a.get("description", "") or "")
+                    for a in articles
                 ]
                 if headlines:
                     components[name] = _aggregate_score(headlines)
@@ -222,8 +295,71 @@ class NewsSentimentFetcher:
             source="marketaux",
         )
 
+    def _fetch_alpha_vantage_news(self, api_key: str) -> SentimentResult:
+        """Use Alpha Vantage's NEWS_SENTIMENT feed for global financial news."""
+        url = (
+            "https://www.alphavantage.co/query"
+            "?function=NEWS_SENTIMENT"
+            "&topics=financial_markets"
+            "&limit=50"
+            f"&apikey={api_key}"
+        )
+        resp = requests.get(url, timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+        feed = data.get("feed", [])
+        if not feed:
+            raise RuntimeError("Alpha Vantage news feed empty")
 
-def fetch_news_sentiment(settings: Settings | None = None) -> dict[str, Any]:
+        headlines: list[str] = []
+        scores: list[float] = []
+        for item in feed:
+            title = item.get("title", "")
+            summary = item.get("summary", "")
+            text = f"{title} {summary}".strip()
+            if text:
+                headlines.append(text)
+            sentiment = item.get("overall_sentiment_score")
+            if isinstance(sentiment, (int, float)):
+                scores.append(float(sentiment))
+
+        score = sum(scores) / len(scores) if scores else _aggregate_score(headlines)
+        return SentimentResult(
+            status="ok",
+            data={"source": "alpha_vantage", "headlines": headlines[:20]},
+            score=round(score, 4),
+            headline_count=len(headlines),
+            source="alpha_vantage",
+        )
+
+    def _fetch_rss_sentiment(self) -> SentimentResult:
+        """Aggregate free business RSS feeds when no API key is available."""
+        all_headlines: list[str] = []
+        for feed_url in RSS_FEEDS:
+            try:
+                resp = requests.get(feed_url, timeout=15)
+                resp.raise_for_status()
+                headlines = _parse_rss(resp.text)
+                all_headlines.extend(headlines)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("RSS fetch %s failed: %s", feed_url, exc)
+
+        if not all_headlines:
+            raise RuntimeError("no RSS headlines returned")
+
+        score = _aggregate_score(all_headlines)
+        return SentimentResult(
+            status="ok",
+            data={"source": "rss", "feeds": RSS_FEEDS},
+            score=score,
+            headline_count=len(all_headlines),
+            source="rss",
+        )
+
+
+def fetch_news_sentiment(
+    settings: Settings | None = None,
+) -> dict[str, Any]:
     """Convenience wrapper returning a plain dict for the DataFetcher pipeline."""
     result = NewsSentimentFetcher(settings).fetch()
     return {

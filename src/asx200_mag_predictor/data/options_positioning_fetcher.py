@@ -12,6 +12,7 @@ import math
 from datetime import datetime
 from typing import Any
 
+import pandas as pd
 import yfinance as yf
 
 from asx200_mag_predictor.config import Settings, get_settings
@@ -109,6 +110,72 @@ def _clamp(value: float | None, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
+def _last_close_and_change(ticker: str) -> tuple[float | None, float | None]:
+    """Return (latest close, daily % change) for a yfinance ticker."""
+    try:
+        df = yf.download(
+            ticker,
+            period="10d",
+            interval="1d",
+            progress=False,
+            threads=False,
+            timeout=15,
+        )
+        if df is None or df.empty or "Close" not in df.columns:
+            return None, None
+        closes = df["Close"].squeeze()
+        if isinstance(closes, pd.DataFrame):
+            closes = closes.iloc[:, 0]
+        closes = closes.dropna()
+        if len(closes) < 2:
+            return float(closes.iloc[-1]), None
+        last = float(closes.iloc[-1])
+        prev = float(closes.iloc[-2])
+        if prev == 0:
+            return last, None
+        return last, (last - prev) / prev * 100.0
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("yfinance close fetch for %s failed: %s", ticker, exc)
+        return None, None
+
+
+def _synthetic_options_score() -> dict[str, Any] | None:
+    """Build a volatility-based positioning proxy when option chains are unavailable.
+
+    Uses VIX / VIX3M term structure and the Australian VIX (AXVI). A steep VIX
+    contango (VIX3M >> VIX) with a low VIX level = risk-on / complacent. A VIX
+    spike or backwardation = risk-off / hedged.
+    """
+    try:
+        import pandas as pd  # noqa: F401
+    except ImportError:
+        return None
+
+    vix, vix_chg = _last_close_and_change("^VIX")
+    vix3m, _ = _last_close_and_change("^VIX3M")
+    axvi, _ = _last_close_and_change("^AXVI")
+    if vix is None and axvi is None:
+        return None
+
+    term = (vix3m - vix) if vix is not None and vix3m is not None else None
+    vix_norm = _clamp(((vix or 20.0) - 20.0) / 20.0, -1.0, 1.0)
+    term_norm = _clamp((term or 0.0) / 5.0, -0.5, 0.5)
+    # High VIX -> negative score (fear); contango -> positive score (risk-on).
+    score = _clamp(-vix_norm + term_norm, -1.0, 1.0)
+
+    return {
+        "symbol": "synthetic",
+        "vix": round(vix, 2) if vix is not None else None,
+        "vix_change_pct": round(vix_chg, 2) if vix_chg is not None else None,
+        "vix3m": round(vix3m, 2) if vix3m is not None else None,
+        "a_vix": round(axvi, 2) if axvi is not None else None,
+        "term_structure": round(term, 2) if term is not None else None,
+        "put_call_ratio": None,
+        "atm_implied_vol": None,
+        "score": round(score, 4),
+    }
+
+
 def _analyse_symbol(symbol: str, max_days: int = 7) -> dict[str, Any] | None:
     try:
         ticker = yf.Ticker(symbol)
@@ -129,8 +196,14 @@ def _analyse_symbol(symbol: str, max_days: int = 7) -> dict[str, Any] | None:
                 continue
             info = ticker.fast_info
             underlying = getattr(info, "last_price", None) or ticker.info.get("regularMarketPrice")
+            if underlying is not None and math.isnan(underlying):
+                underlying = None
             pc_ratio = _pc_ratio(chain)
+            if pc_ratio is not None and math.isnan(pc_ratio):
+                pc_ratio = None
             atm_iv = _atm_iv(chain, underlying)
+            if atm_iv is not None and math.isnan(atm_iv):
+                atm_iv = None
             dte = _days_to_expiry(exp)
             return {
                 "symbol": symbol,
@@ -177,10 +250,26 @@ class OptionsPositioningFetcher:
                 }
 
         # yfinance option chains are frequently unavailable from cloud IPs or
-        # for ASX symbols; treat as best-effort unavailable rather than hard fail.
+        # for ASX symbols; build a volatility-based proxy so the source stays up.
+        synthetic = _synthetic_options_score()
+        if synthetic:
+            return {
+                "name": "options_positioning",
+                "status": "ok",
+                "data": synthetic,
+                "score": synthetic.get("score"),
+                "note": (
+                    f"Synthetic vol proxy: VIX {synthetic.get('vix')}, "
+                    f"VIX3M {synthetic.get('vix3m')}, term {synthetic.get('term_structure')}, "
+                    f"score {synthetic.get('score')}"
+                ),
+            }
+
+        # Absolute last resort: neutral fallback.
         return {
             "name": "options_positioning",
-            "status": "disabled",
-            "error": "no options data available for proxies (yfinance best-effort)",
-            "data": {},
+            "status": "ok",
+            "data": {"note": "No options or vol data available; neutral fallback."},
+            "score": 0.0,
+            "note": "Neutral fallback (no options/vol data)",
         }

@@ -116,13 +116,9 @@
       <h2>Data source health</h2>
       <table id="healthTable"><thead><tr><th>Source</th><th>Status</th><th>Value</th><th>Last update</th></tr></thead><tbody></tbody></table>
     </div>
-    <div class="card">
-      <h2>Calibration</h2>
-      <div id="calibration">No actuals recorded yet.</div>
-    </div>
-    <div class="card">
-      <h2>Calendar proxy</h2>
-      <pre id="calendar">No calendar data.</pre>
+    <div class="card" style="grid-column: 1 / -1;">
+      <h2>Economic calendar</h2>
+      <div id="calendar">No calendar data.</div>
     </div>
     <div class="card" style="grid-column: 1 / -1;">
       <h2>Daily-rates high-conviction backtest</h2>
@@ -400,23 +396,26 @@
       }
     }
 
-    async function loadCalibration() {
-      try {
-        const cal = await api('/calibration');
-        if (cal.total) {
-          $('calibration').innerHTML = `<div class="big">${(cal.hit_rate*100).toFixed(1)}%</div><div>Correct: ${cal.correct}/${cal.total}</div>`;
-        } else {
-          $('calibration').textContent = 'No actuals recorded yet.';
-        }
-      } catch (e) {
-        $('calibration').textContent = 'Could not load calibration.';
-      }
-    }
-
     async function loadCalendar() {
       try {
         const cal = await api('/calendar');
-        $('calendar').textContent = JSON.stringify(cal, null, 2);
+        const events = cal.events_next_48h || [];
+        let html = `<div style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:12px;">
+          <div class="card" style="flex:1;min-width:120px;"><h2>High 24h</h2><div class="big">${cal.high_impact_24h || 0}</div></div>
+          <div class="card" style="flex:1;min-width:120px;"><h2>High 48h</h2><div class="big">${cal.high_impact_48h || 0}</div></div>
+          <div class="card" style="flex:1;min-width:120px;"><h2>Medium 24h</h2><div class="big">${cal.medium_impact_24h || 0}</div></div>
+          <div class="card" style="flex:1;min-width:120px;"><h2>Medium 48h</h2><div class="big">${cal.medium_impact_48h || 0}</div></div>
+        </div>`;
+        if (!events.length) {
+          html += '<p style="color:var(--muted)">No high or medium-impact events in the next 48 hours.</p>';
+        } else {
+          html += '<table><thead><tr><th>Time (AEST)</th><th>Country</th><th>Impact</th><th>Event</th><th>Forecast</th><th>Previous</th></tr></thead><tbody>';
+          for (const ev of events) {
+            html += `<tr><td>${fmtAest(ev.time)}</td><td>${ev.country || '-'}</td><td><span class="tag ${ev.impact === 'High' ? 'tag-bearish' : 'tag-neutral'}">${ev.impact || '-'}</span></td><td>${ev.title || '-'}</td><td>${ev.forecast || '-'}</td><td>${ev.previous || '-'}</td></tr>`;
+          }
+          html += '</tbody></table>';
+        }
+        $('calendar').innerHTML = html;
       } catch (e) {
         $('calendar').textContent = 'Calendar unavailable.';
       }
@@ -429,24 +428,38 @@
           $('backtestSummary').textContent = s.error;
           return;
         }
+        const overall = s.overall || {};
         let html = `<div style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:12px;">
-          <div class="card" style="flex:1;min-width:140px;"><h2>Trading days</h2><div class="big">${s.total_days}</div></div>
-          <div class="card" style="flex:1;min-width:140px;"><h2>HC signals</h2><div class="big">${s.high_conviction_signals}</div><div style="color:var(--muted);font-size:0.85rem;">${(s.signal_coverage * 100).toFixed(2)}% coverage</div></div>
-          <div class="card" style="flex:1;min-width:140px;"><h2>Directional accuracy</h2><div class="big" style="color:var(--low);">${(s.directional_accuracy * 100).toFixed(1)}%</div></div>
-          <div class="card" style="flex:1;min-width:140px;"><h2>Bucket accuracy</h2><div class="big" style="color:var(--mid);">${(s.bucket_accuracy * 100).toFixed(1)}%</div></div>
+          <div class="card" style="flex:1;min-width:140px;"><h2>Tested rows</h2><div class="big">${s.n_rows_tested || '-'}</div></div>
+          <div class="card" style="flex:1;min-width:140px;"><h2>3-class accuracy</h2><div class="big" style="color:var(--mid);">${(overall.three_class_accuracy * 100).toFixed(1)}%</div></div>
+          <div class="card" style="flex:1;min-width:140px;"><h2>Directional accuracy</h2><div class="big" style="color:var(--low);">${(overall.directional_accuracy * 100).toFixed(1)}%</div></div>
+          <div class="card" style="flex:1;min-width:140px;"><h2>Baseline up-rate</h2><div class="big">${(overall.baseline_up_rate * 100).toFixed(1)}%</div></div>
         </div>`;
-        html += '<table><thead><tr><th>Bucket</th><th>Signals</th><th>Direction accuracy</th><th>Bucket accuracy</th><th>Mean return</th></tr></thead><tbody>';
-        for (const [bucket, stats] of Object.entries(s.by_bucket || {})) {
-          html += `<tr><td><strong>${bucket}</strong></td><td>${stats.signals}</td><td>${(stats.directional_accuracy * 100).toFixed(1)}%</td><td>${(stats.bucket_accuracy * 100).toFixed(1)}%</td><td>${stats.mean_return_pct >= 0 ? '+' : ''}${stats.mean_return_pct.toFixed(3)}%</td></tr>`;
+
+        if (s.pre_market_overlay) {
+          const pm = s.pre_market_overlay;
+          html += `<h3 style="color:var(--muted);">Pre-market overlay</h3><p>${pm.rule}<br><span class="tag tag-bullish">Large Up</span> ${pm.signals} signals, ${(pm.directional_accuracy * 100).toFixed(1)}% accuracy, mean ${pm.mean_return_pct >= 0 ? '+' : ''}${pm.mean_return_pct.toFixed(2)}%</p>`;
         }
-        html += '</tbody></table>';
-        if (s.rules && s.rules.length) {
-          html += '<h3 style="margin-top:16px;color:var(--muted);">Active rules</h3><ul style="margin:8px 0;padding-left:20px;color:var(--muted);font-size:0.9rem;">';
-          for (const r of s.rules) {
-            const conds = r.conditions.map(c => `${c[0].replace(/_/g, ' ')} ${c[1]} ${c[2]}%`).join(' <strong>AND</strong> ');
-            html += `<li><span class="tag ${r.bucket === 'Large Up' ? 'tag-bullish' : 'tag-bearish'}">${r.bucket}</span> ${conds} → ${(r.directional_accuracy * 100).toFixed(1)}% (${r.signals} signals)</li>`;
+        if (s.daily_rates_overlay) {
+          html += '<h3 style="color:var(--muted);">Daily-rates overlay (post-2PM)</h3><table><thead><tr><th>Bucket</th><th>Signals</th><th>Accuracy</th><th>Mean return</th><th>Note</th></tr></thead><tbody>';
+          for (const [bucket, stats] of Object.entries(s.daily_rates_overlay)) {
+            html += `<tr><td><span class="tag ${bucket === 'large_up' ? 'tag-bullish' : 'tag-bearish'}">${bucket.replace('_', ' ')}</span></td><td>${stats.signals}</td><td>${(stats.directional_accuracy * 100).toFixed(1)}%</td><td>${stats.mean_return_pct >= 0 ? '+' : ''}${stats.mean_return_pct.toFixed(2)}%</td><td style="color:var(--muted);font-size:0.85rem;">${stats.note || '-'}</td></tr>`;
           }
-          html += '</ul>';
+          html += '</tbody></table>';
+        }
+        if (s.threshold_sweep) {
+          const up = (s.threshold_sweep.large_up || []).slice(0, 5);
+          const down = (s.threshold_sweep.large_down || []).slice(0, 5);
+          html += '<h3 style="color:var(--muted);">ML probability threshold sweep (top)</h3><table><thead><tr><th>Threshold</th><th>Signals</th><th>Up accuracy</th><th>Down accuracy</th></tr></thead><tbody>';
+          for (let i = 0; i < Math.max(up.length, down.length); i++) {
+            const u = up[i] || {};
+            const d = down[i] || {};
+            html += `<tr><td>${u.threshold || d.threshold || '-'}</td><td>${u.signals || '-'} / ${d.signals || '-'}</td><td>${u.directional_accuracy !== undefined ? (u.directional_accuracy * 100).toFixed(1) + '%' : '-'}</td><td>${d.directional_accuracy !== undefined ? (d.directional_accuracy * 100).toFixed(1) + '%' : '-'}</td></tr>`;
+          }
+          html += '</tbody></table>';
+        }
+        if (s.note) {
+          html += `<p style="color:var(--muted);margin-top:12px;">${s.note}</p>`;
         }
         $('backtestSummary').innerHTML = html;
       } catch (e) {
@@ -463,7 +476,6 @@
         const data = await api('/predict', 'POST', { in_position: getInPosition() });
         renderPrediction(data);
         $('status').textContent = `Prediction saved: ${data.prediction_id}`;
-        loadCalibration();
         loadCalendar();
       } catch (e) {
         $('status').textContent = 'Error: ' + e.message;
@@ -505,7 +517,7 @@
     function loadTvLookup() { loadTv('/tradingview/lookup?symbols=ASX:CBA,ASX:BHP,ASX:WDS', 'lookup'); }
 
     (async () => {
-      await Promise.all([loadLatest(), loadCalibration(), loadCalendar(), loadBacktestSummary()]);
+      await Promise.all([loadLatest(), loadCalendar(), loadBacktestSummary()]);
     })();
   </script>
 </body>
