@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
+from pathlib import Path
 from typing import Any, cast
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Body, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from asx200_mag_predictor.config import get_settings
@@ -18,6 +20,9 @@ from asx200_mag_predictor.timezone import now_sydney
 
 logger = get_logger(__name__)
 router = APIRouter()
+
+# In-memory upload job store. Jobs are lost on container restart; use a DB or disk if needed.
+_upload_jobs: dict[str, dict[str, Any]] = {}
 
 
 class PredictRequest(BaseModel):
@@ -293,3 +298,100 @@ async def tradingview_lookup(symbols: str) -> dict[str, Any]:
     if not parts:
         raise HTTPException(status_code=400, detail="No symbols provided")
     return await asyncio.to_thread(fiale_lookup, *parts)
+
+
+def _process_upload(
+    job_id: str,
+    file_path: Path,
+    target_column: str,
+    period: str,
+    train_models: bool,
+) -> None:
+    """Background worker: run backtest + optional model retrain from uploaded CSV."""
+    from asx200_mag_predictor.scoring.csv_backtest import (
+        run_backtest_and_train,
+        write_summary,
+    )
+
+    _upload_jobs[job_id]["status"] = "running"
+    try:
+        settings = get_settings()
+        model_dir = settings.ml_model_dir if train_models else None
+        summary = run_backtest_and_train(
+            csv_path=file_path,
+            period=period,
+            n_splits=5,
+            model_dir=model_dir,
+            target_column=target_column,
+        )
+        write_summary(summary)
+        _upload_jobs[job_id].update(
+            {
+                "status": "completed",
+                "completed_at": now_sydney().isoformat(),
+                "summary": {
+                    "n_rows_tested": summary.get("n_rows_tested"),
+                    "three_class_accuracy": summary.get("overall", {}).get(
+                        "three_class_accuracy"
+                    ),
+                    "directional_accuracy": summary.get("overall", {}).get(
+                        "directional_accuracy"
+                    ),
+                    "binary_directional_accuracy": summary.get("binary", {}).get(
+                        "directional_accuracy"
+                    ),
+                    "note": summary.get("note"),
+                },
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Upload backtest/train failed")
+        _upload_jobs[job_id].update({"status": "failed", "error": str(exc)})
+
+
+@router.post("/backtest/upload")
+async def upload_backtest_csv(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    target_column: str = Form("Australian Shares"),
+    period: str = Form("5y"),
+    train_models: bool = Form(True),
+) -> dict[str, Any]:
+    """Upload a daily-rates CSV and start an async backtest + model retrain job."""
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only .csv files are accepted")
+
+    settings = get_settings()
+    upload_dir = settings.data_dir / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    job_id = str(uuid.uuid4())
+    safe_name = Path(file.filename).name
+    file_path = upload_dir / f"{job_id}_{safe_name}"
+
+    try:
+        file_path.write_bytes(await file.read())
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Could not save upload: {exc}") from exc
+
+    _upload_jobs[job_id] = {
+        "job_id": job_id,
+        "status": "pending",
+        "file": safe_name,
+        "target_column": target_column,
+        "period": period,
+        "train_models": train_models,
+        "submitted_at": now_sydney().isoformat(),
+    }
+    background_tasks.add_task(
+        _process_upload, job_id, file_path, target_column, period, train_models
+    )
+    return _upload_jobs[job_id]
+
+
+@router.get("/backtest/upload/status/{job_id}")
+async def upload_status(job_id: str) -> dict[str, Any]:
+    """Poll the status of a CSV upload backtest/train job."""
+    job = _upload_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job

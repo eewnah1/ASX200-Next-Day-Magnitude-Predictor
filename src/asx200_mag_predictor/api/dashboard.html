@@ -126,6 +126,23 @@
     </div>
 
     <div class="card" style="grid-column: 1 / -1;">
+      <h2>Upload new daily-rates CSV</h2>
+      <p style="color:var(--muted);">Upload a CSV with columns <code>Rate Date</code> and <code>Australian Shares</code> (or pick a different target column). The backtest will be regenerated and the ML models retrained in the background.</p>
+      <form id="uploadForm" enctype="multipart/form-data" style="margin-bottom:12px;">
+        <input type="file" id="csvFile" accept=".csv" required style="margin-right:8px;" />
+        <input type="text" id="targetColumn" value="Australian Shares" placeholder="Target column" style="width:160px;margin-right:8px;" />
+        <select id="periodSelect" style="margin-right:8px;">
+          <option value="5y">5 years</option>
+          <option value="10y">10 years</option>
+          <option value="max">Max available</option>
+        </select>
+        <label style="margin-right:8px;"><input type="checkbox" id="trainModels" checked /> Retrain models</label>
+        <button type="submit">Upload & run</button>
+      </form>
+      <div id="uploadStatus" class="status"></div>
+    </div>
+
+    <div class="card" style="grid-column: 1 / -1;">
       <h2>TradingView MCP Intelligence</h2>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
         <button onclick="loadTvInsights()">All insights</button>
@@ -485,6 +502,51 @@
         $('backtestSummary').textContent = 'Backtest summary unavailable.';
       }
     }
+
+    async function pollUpload(jobId) {
+      const statusEl = $('uploadStatus');
+      try {
+        const job = await api(`/backtest/upload/status/${jobId}`);
+        statusEl.textContent = `Status: ${job.status}`;
+        if (job.status === 'pending' || job.status === 'running') {
+          setTimeout(() => pollUpload(jobId), 3000);
+          return;
+        }
+        if (job.status === 'completed') {
+          statusEl.className = 'status ok';
+          statusEl.textContent = `Done. Rows ${job.summary.n_rows_tested || '-'}, 3-class ${(job.summary.three_class_accuracy * 100).toFixed(1)}%, direction ${(job.summary.directional_accuracy * 100).toFixed(1)}%, binary ${(job.summary.binary_directional_accuracy * 100).toFixed(1)}%.`;
+          loadBacktestSummary();
+          return;
+        }
+        statusEl.className = 'status error';
+        statusEl.textContent = `Failed: ${job.error || 'unknown'}`;
+      } catch (e) {
+        statusEl.className = 'status error';
+        statusEl.textContent = 'Error: ' + e.message;
+      }
+    }
+
+    $('uploadForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const statusEl = $('uploadStatus');
+      statusEl.className = 'status';
+      statusEl.textContent = 'Uploading...';
+      const form = new FormData();
+      form.append('file', $('csvFile').files[0]);
+      form.append('target_column', $('targetColumn').value || 'Australian Shares');
+      form.append('period', $('periodSelect').value);
+      form.append('train_models', $('trainModels').checked ? 'true' : 'false');
+      try {
+        const resp = await fetch(API_BASE + '/backtest/upload', { method: 'POST', body: form });
+        if (!resp.ok) throw new Error((await resp.json()).detail || resp.statusText);
+        const job = await resp.json();
+        statusEl.textContent = `Job ${job.job_id} ${job.status}. Polling...`;
+        pollUpload(job.job_id);
+      } catch (err) {
+        statusEl.className = 'status error';
+        statusEl.textContent = 'Upload failed: ' + err.message;
+      }
+    });
 
     async function runPrediction() {
       const btn = $('runBtn');

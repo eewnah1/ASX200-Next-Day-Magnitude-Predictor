@@ -9,6 +9,7 @@ directional accuracy on high-confidence days.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import warnings
 from pathlib import Path
@@ -35,26 +36,69 @@ DEFAULT_CSV = (
 )
 
 
-def _daily_rates_csv(csv_path: str | Path | None = None) -> pd.DataFrame:
+def _daily_rates_csv(
+    csv_path: str | Path | None = None,
+    target_column: str = "Australian Shares",
+) -> pd.DataFrame:
     """Load and parse the user-supplied Daily Rates CSV."""
     path = Path(csv_path or DEFAULT_CSV)
     df = pd.read_csv(path)
-    df["Date"] = pd.to_datetime(df["Rate Date"], format="%m/%d/%Y")
+    df["Date"] = pd.to_datetime(df["Rate Date"], dayfirst=False, errors="coerce")
+    if df["Date"].isna().all():
+        df["Date"] = pd.to_datetime(df["Rate Date"], dayfirst=True, errors="coerce")
     df = df.sort_values("Date").reset_index(drop=True)
-    df["aus_next"] = pd.to_numeric(df["Australian Shares"], errors="coerce").shift(-1)
+    if target_column not in df.columns:
+        cols = ", ".join(str(c) for c in df.columns)
+        raise ValueError(f"CSV missing target column '{target_column}'. Columns: {cols}")
+    df["aus_next"] = pd.to_numeric(df[target_column], errors="coerce").shift(-1)
     return df
+
+
+def _cache_path_for_csv(csv_path: str | Path | None, period: str) -> Path:
+    """Cache key based on CSV file content hash so different CSVs don't reuse stale rows."""
+    path = Path(csv_path or DEFAULT_CSV)
+    data_dir = Path(get_settings().data_dir)
+    if path.exists():
+        file_hash = hashlib.md5(path.read_bytes()).hexdigest()[:12]
+    else:
+        file_hash = hashlib.md5(str(path).encode()).hexdigest()[:12]
+    return data_dir / f"csv_backtest_rows_{file_hash}_{period}.parquet"
+
+
+def _set_labels_from_actual(rows: pd.DataFrame) -> pd.DataFrame:
+    """Recompute primary / secondary labels from the CSV actual next-day return."""
+    from asx200_mag_predictor.scoring.ml import _bucket_from_return
+
+    rows = rows.copy()
+    rows["next_return_pct"] = rows["actual"]
+    rows["primary_label"] = rows["actual"].apply(_bucket_from_return)
+
+    def _secondary(return_pct: float, primary: str) -> str | None:
+        if primary != "Neutral":
+            return None
+        if return_pct >= 0.3:
+            return "Mild Bullish Bias"
+        if return_pct <= -0.3:
+            return "Mild Bearish Bias"
+        return "True Neutral"
+
+    rows["secondary_label"] = rows.apply(
+        lambda r: _secondary(r["actual"], r["primary_label"]), axis=1
+    )
+    return rows
 
 
 def _load_or_build_rows(
     csv_path: str | Path | None = None,
     period: str = "5y",
     cache_path: Path | None = None,
+    target_column: str = "Australian Shares",
 ) -> pd.DataFrame:
     """Build the historical feature matrix (with caching)."""
-    cache = cache_path or Path(get_settings().data_dir) / "csv_backtest_rows.parquet"
+    cache = cache_path or _cache_path_for_csv(csv_path, period)
     if cache.exists():
         try:
-            return pd.read_parquet(cache)
+            return _set_labels_from_actual(pd.read_parquet(cache))
         except Exception:
             pass
 
@@ -63,10 +107,11 @@ def _load_or_build_rows(
     if rows.empty:
         raise RuntimeError("HistoricalFeatureBuilder returned no rows")
 
-    rates = _daily_rates_csv(csv_path)
+    rates = _daily_rates_csv(csv_path, target_column=target_column)
     date_to_next = dict(zip(rates["Date"].dt.normalize(), rates["aus_next"]))
     rows["actual"] = rows["date"].map(lambda d: date_to_next.get(d))
     rows = rows.dropna(subset=["actual"])
+    rows = _set_labels_from_actual(rows)
 
     cache.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -342,6 +387,93 @@ def run_backtest(
         },
         "note": note,
     }
+    return summary
+
+
+def _train_from_rows(
+    rows: pd.DataFrame,
+    model_dir: Path,
+) -> dict[str, Any]:
+    """Train primary, binary, and secondary models from the feature matrix."""
+    from asx200_mag_predictor.timezone import now_sydney
+
+    model_dir = Path(model_dir)
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    mapper = MLFeatureMapper()
+    mapper.fit(rows.to_dict("records"))
+    x = mapper.transform(rows.to_dict("records"))
+
+    primary = MLModel("primary", kind="gbm")
+    primary_cv = primary.fit(x, rows["primary_label"].values, mapper.feature_names)
+    primary.save(model_dir / "primary.pkl")
+
+    binary_label = np.where(rows["actual"].values > 0, "Up", "Down")
+    binary = MLModel("binary", kind="gbm")
+    binary_cv = binary.fit(x, binary_label, mapper.feature_names)
+    binary.save(model_dir / "binary.pkl")
+
+    neutral = rows[rows["primary_label"] == "Neutral"].copy()
+    secondary: MLModel | None = None
+    secondary_cv = None
+    if len(neutral) >= 50 and neutral["secondary_label"].dropna().nunique() >= 2:
+        x_sec = mapper.transform(neutral.to_dict("records"))
+        y_sec = neutral["secondary_label"].dropna().values
+        secondary = MLModel("secondary", kind="gbm")
+        secondary_cv = secondary.fit(x_sec, y_sec, mapper.feature_names)
+        secondary.save(model_dir / "secondary.pkl")
+
+    mapper.save(model_dir / "mapper.pkl")
+
+    metadata = {
+        "status": "ok",
+        "trained_at": now_sydney().isoformat(),
+        "rows": len(rows),
+        "neutral_rows": len(neutral),
+        "primary_labels": rows["primary_label"].value_counts().to_dict(),
+        "secondary_labels": neutral["secondary_label"].value_counts().to_dict()
+        if not neutral.empty
+        else {},
+        "primary_cv": primary_cv,
+        "binary_cv": binary_cv,
+        "secondary_cv": secondary_cv,
+        "features": mapper.feature_names,
+    }
+    with (model_dir / "metadata.json").open("w") as f:
+        json.dump(metadata, f, indent=2, default=str)
+    return metadata
+
+
+def train_models_from_csv(
+    csv_path: str | Path,
+    model_dir: str | Path,
+    period: str = "5y",
+    target_column: str = "Australian Shares",
+) -> dict[str, Any]:
+    """Build feature rows from a user CSV and train the hybrid ML models."""
+    rows = _load_or_build_rows(csv_path, period=period, target_column=target_column)
+    if rows.empty or len(rows) < 100:
+        return {"status": "error", "message": f"insufficient rows ({len(rows)})"}
+    return _train_from_rows(rows, model_dir)
+
+
+def run_backtest_and_train(
+    csv_path: str | Path | None = None,
+    period: str = "5y",
+    n_splits: int = 5,
+    model_dir: str | Path | None = None,
+    target_column: str = "Australian Shares",
+) -> dict[str, Any]:
+    """Run OOS backtest, write summary, and (optionally) train models from the same CSV."""
+    summary = run_backtest(csv_path, period=period, n_splits=n_splits)
+    if model_dir is not None:
+        training = train_models_from_csv(
+            csv_path,
+            model_dir,
+            period=period,
+            target_column=target_column,
+        )
+        summary["training"] = training
     return summary
 
 
