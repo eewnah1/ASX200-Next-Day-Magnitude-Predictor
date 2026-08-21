@@ -1783,13 +1783,14 @@ class ScoringEngine:
         fv: FeatureVector,
         ml_binary_probs: dict[str, float] | None,
     ) -> tuple[str, float, float, str]:
-        """Return Positive/Negative/Hold switch signal using only pre-2PM inputs.
+        """Return Positive/Negative/Hold switch signal using pre-2PM inputs + ML confidence.
 
         The calibrated overlay rules in ``switch_overlay.py`` were discovered on
         the user's Australian Shares CSV (2008-2026).  The combined union produces
         high-conviction signals while keeping directional accuracy above 90%.
         """
-        overlay = evaluate_switch_overlay(fv)
+        features = fv.model_dump() | (ml_binary_probs or {})
+        overlay = evaluate_switch_overlay(features)
         if overlay:
             return (
                 overlay["decision"],
@@ -1799,9 +1800,9 @@ class ScoringEngine:
             )
 
         # No high-conviction overlay fired; the safe decision is to stay put.
-        # The calibrated overlay has 124 historical signals at 93.5% accuracy.
-        reason = "No high-conviction pre-2PM switch signal (overlay accuracy 93.5%)"
-        return "HOLD", 0.0, 0.9355, reason
+        # The calibrated overlay has 110 historical signals at 99.1% accuracy.
+        reason = "No high-conviction pre-2PM switch signal (overlay accuracy 99.1%)"
+        return "HOLD", 0.0, 0.991, reason
 
     def _coerce(self, features: FeatureVector | dict[str, Any]) -> FeatureVector:
         if isinstance(features, FeatureVector):

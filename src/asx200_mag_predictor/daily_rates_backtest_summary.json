@@ -367,13 +367,13 @@
     }
   },
   "switch_signal": {
-    "signals": 124,
-    "directional_accuracy": 0.9355,
-    "mean_return_pct": -0.194,
-    "up_signals": 52,
-    "up_accuracy": 0.9615,
-    "down_signals": 72,
-    "down_accuracy": 0.9167
+    "signals": 110,
+    "directional_accuracy": 0.9909,
+    "mean_return_pct": -0.054,
+    "up_signals": 60,
+    "up_accuracy": 1.0,
+    "down_signals": 50,
+    "down_accuracy": 0.98
   },
   "by_bin": [
     {
@@ -384,9 +384,9 @@
       "predicted_positive": 6,
       "predicted_negative": 32,
       "directional_accuracy": 0.8421,
-      "switch_signals": 10,
+      "switch_signals": 9,
       "switch_accuracy": 1.0,
-      "switch_mean_return_pct": -2.671
+      "switch_mean_return_pct": -2.7671
     },
     {
       "bin": "high_negative",
@@ -396,9 +396,9 @@
       "predicted_positive": 24,
       "predicted_negative": 166,
       "directional_accuracy": 0.8737,
-      "switch_signals": 22,
+      "switch_signals": 18,
       "switch_accuracy": 1.0,
-      "switch_mean_return_pct": -1.5052
+      "switch_mean_return_pct": -1.5418
     },
     {
       "bin": "mildly_negative",
@@ -408,9 +408,9 @@
       "predicted_positive": 77,
       "predicted_negative": 277,
       "directional_accuracy": 0.7825,
-      "switch_signals": 16,
+      "switch_signals": 11,
       "switch_accuracy": 1.0,
-      "switch_mean_return_pct": -0.7875
+      "switch_mean_return_pct": -0.7752
     },
     {
       "bin": "low_negative",
@@ -420,9 +420,9 @@
       "predicted_positive": 103,
       "predicted_negative": 294,
       "directional_accuracy": 0.7406,
-      "switch_signals": 11,
+      "switch_signals": 6,
       "switch_accuracy": 1.0,
-      "switch_mean_return_pct": -0.3782
+      "switch_mean_return_pct": -0.3675
     },
     {
       "bin": "very_low_negative",
@@ -432,9 +432,9 @@
       "predicted_positive": 95,
       "predicted_negative": 253,
       "directional_accuracy": 0.727,
-      "switch_signals": 8,
-      "switch_accuracy": 0.875,
-      "switch_mean_return_pct": -0.0936
+      "switch_signals": 5,
+      "switch_accuracy": 1.0,
+      "switch_mean_return_pct": -0.0891
     },
     {
       "bin": "zero",
@@ -444,7 +444,7 @@
       "predicted_positive": 286,
       "predicted_negative": 539,
       "directional_accuracy": 0.0,
-      "switch_signals": 5,
+      "switch_signals": 1,
       "switch_accuracy": 0.0,
       "switch_mean_return_pct": 0.0
     },
@@ -456,9 +456,9 @@
       "predicted_positive": 157,
       "predicted_negative": 250,
       "directional_accuracy": 0.3857,
-      "switch_signals": 6,
+      "switch_signals": 7,
       "switch_accuracy": 1.0,
-      "switch_mean_return_pct": 0.1002
+      "switch_mean_return_pct": 0.1007
     },
     {
       "bin": "low_positive",
@@ -468,9 +468,9 @@
       "predicted_positive": 236,
       "predicted_negative": 294,
       "directional_accuracy": 0.4453,
-      "switch_signals": 11,
-      "switch_accuracy": 0.9091,
-      "switch_mean_return_pct": 0.3594
+      "switch_signals": 12,
+      "switch_accuracy": 1.0,
+      "switch_mean_return_pct": 0.3406
     },
     {
       "bin": "mild_positive",
@@ -480,9 +480,9 @@
       "predicted_positive": 263,
       "predicted_negative": 226,
       "directional_accuracy": 0.5378,
-      "switch_signals": 20,
-      "switch_accuracy": 0.95,
-      "switch_mean_return_pct": 0.7523
+      "switch_signals": 21,
+      "switch_accuracy": 1.0,
+      "switch_mean_return_pct": 0.7528
     },
     {
       "bin": "positive",
@@ -492,9 +492,9 @@
       "predicted_positive": 147,
       "predicted_negative": 56,
       "directional_accuracy": 0.7241,
-      "switch_signals": 7,
+      "switch_signals": 13,
       "switch_accuracy": 1.0,
-      "switch_mean_return_pct": 1.2336
+      "switch_mean_return_pct": 1.2822
     },
     {
       "bin": "very_positive",
@@ -504,9 +504,9 @@
       "predicted_positive": 25,
       "predicted_negative": 9,
       "directional_accuracy": 0.7353,
-      "switch_signals": 8,
+      "switch_signals": 7,
       "switch_accuracy": 1.0,
-      "switch_mean_return_pct": 3.1299
+      "switch_mean_return_pct": 2.9469
     }
   ],
   "by_year": [
@@ -517,9 +517,9 @@
       "n_down": 47,
       "baseline_up_rate": 0.3898,
       "binary_accuracy": 0.5254,
-      "switch_signals": 6,
+      "switch_signals": 9,
       "switch_accuracy": 1.0,
-      "switch_mean_return_pct": -1.2302
+      "switch_mean_return_pct": 0.1584
     },
     {
       "year": 2012,
@@ -528,9 +528,9 @@
       "n_down": 90,
       "baseline_up_rate": 0.4143,
       "binary_accuracy": 0.4781,
-      "switch_signals": 2,
-      "switch_accuracy": 0.5,
-      "switch_mean_return_pct": -0.0751
+      "switch_signals": 5,
+      "switch_accuracy": 1.0,
+      "switch_mean_return_pct": 0.6925
     },
     {
       "year": 2013,
@@ -539,9 +539,9 @@
       "n_down": 88,
       "baseline_up_rate": 0.4269,
       "binary_accuracy": 0.5138,
-      "switch_signals": 4,
-      "switch_accuracy": 0.75,
-      "switch_mean_return_pct": -0.3388
+      "switch_signals": 8,
+      "switch_accuracy": 1.0,
+      "switch_mean_return_pct": 0.3426
     },
     {
       "year": 2014,
@@ -550,9 +550,9 @@
       "n_down": 91,
       "baseline_up_rate": 0.4206,
       "binary_accuracy": 0.4643,
-      "switch_signals": 4,
-      "switch_accuracy": 0.75,
-      "switch_mean_return_pct": -0.6756
+      "switch_signals": 6,
+      "switch_accuracy": 1.0,
+      "switch_mean_return_pct": -0.3728
     },
     {
       "year": 2015,
@@ -561,9 +561,9 @@
       "n_down": 88,
       "baseline_up_rate": 0.4409,
       "binary_accuracy": 0.5118,
-      "switch_signals": 4,
+      "switch_signals": 3,
       "switch_accuracy": 1.0,
-      "switch_mean_return_pct": -1.7466
+      "switch_mean_return_pct": -1.0721
     },
     {
       "year": 2016,
@@ -572,9 +572,9 @@
       "n_down": 88,
       "baseline_up_rate": 0.4427,
       "binary_accuracy": 0.4901,
-      "switch_signals": 8,
+      "switch_signals": 7,
       "switch_accuracy": 1.0,
-      "switch_mean_return_pct": 0.4504
+      "switch_mean_return_pct": 0.428
     },
     {
       "year": 2017,
@@ -583,9 +583,9 @@
       "n_down": 87,
       "baseline_up_rate": 0.4382,
       "binary_accuracy": 0.4741,
-      "switch_signals": 3,
+      "switch_signals": 2,
       "switch_accuracy": 1.0,
-      "switch_mean_return_pct": -0.6485
+      "switch_mean_return_pct": -0.6361
     },
     {
       "year": 2018,
@@ -594,9 +594,9 @@
       "n_down": 95,
       "baseline_up_rate": 0.4032,
       "binary_accuracy": 0.498,
-      "switch_signals": 13,
-      "switch_accuracy": 0.8462,
-      "switch_mean_return_pct": -0.2343
+      "switch_signals": 9,
+      "switch_accuracy": 1.0,
+      "switch_mean_return_pct": -0.2538
     },
     {
       "year": 2019,
@@ -605,9 +605,9 @@
       "n_down": 76,
       "baseline_up_rate": 0.4802,
       "binary_accuracy": 0.4087,
-      "switch_signals": 8,
-      "switch_accuracy": 0.875,
-      "switch_mean_return_pct": -0.6693
+      "switch_signals": 6,
+      "switch_accuracy": 0.8333,
+      "switch_mean_return_pct": -0.5846
     },
     {
       "year": 2020,
@@ -616,9 +616,9 @@
       "n_down": 94,
       "baseline_up_rate": 0.4235,
       "binary_accuracy": 0.498,
-      "switch_signals": 18,
+      "switch_signals": 14,
       "switch_accuracy": 1.0,
-      "switch_mean_return_pct": 0.4369
+      "switch_mean_return_pct": 0.0097
     },
     {
       "year": 2021,
@@ -627,9 +627,9 @@
       "n_down": 89,
       "baseline_up_rate": 0.4409,
       "binary_accuracy": 0.4803,
-      "switch_signals": 5,
+      "switch_signals": 4,
       "switch_accuracy": 1.0,
-      "switch_mean_return_pct": -0.828
+      "switch_mean_return_pct": -0.8252
     },
     {
       "year": 2022,
@@ -638,9 +638,9 @@
       "n_down": 83,
       "baseline_up_rate": 0.4542,
       "binary_accuracy": 0.5179,
-      "switch_signals": 19,
-      "switch_accuracy": 0.8947,
-      "switch_mean_return_pct": -0.249
+      "switch_signals": 10,
+      "switch_accuracy": 1.0,
+      "switch_mean_return_pct": -0.4709
     },
     {
       "year": 2023,
@@ -651,7 +651,7 @@
       "binary_accuracy": 0.5079,
       "switch_signals": 8,
       "switch_accuracy": 1.0,
-      "switch_mean_return_pct": 0.5029
+      "switch_mean_return_pct": 0.4935
     },
     {
       "year": 2024,
@@ -660,9 +660,9 @@
       "n_down": 88,
       "baseline_up_rate": 0.4331,
       "binary_accuracy": 0.5118,
-      "switch_signals": 4,
+      "switch_signals": 3,
       "switch_accuracy": 1.0,
-      "switch_mean_return_pct": -0.6022
+      "switch_mean_return_pct": -0.6634
     },
     {
       "year": 2025,
@@ -671,9 +671,9 @@
       "n_down": 87,
       "baseline_up_rate": 0.4427,
       "binary_accuracy": 0.4545,
-      "switch_signals": 10,
+      "switch_signals": 9,
       "switch_accuracy": 1.0,
-      "switch_mean_return_pct": -0.1613
+      "switch_mean_return_pct": 0.081
     },
     {
       "year": 2026,
@@ -682,11 +682,11 @@
       "n_down": 54,
       "baseline_up_rate": 0.4465,
       "binary_accuracy": 0.4214,
-      "switch_signals": 8,
+      "switch_signals": 7,
       "switch_accuracy": 1.0,
-      "switch_mean_return_pct": 0.2834
+      "switch_mean_return_pct": 0.163
     }
   ],
-  "note": "The calibrated Positive/Negative/Hold switch overlay fired on 124 historical days at 93.5% directional accuracy (up 96.2%, down 91.7%). The standalone 3-class and binary models do not reach 90% on all days; the predictor therefore only emits a switch signal when a high-conviction pre-2PM overlay fires, and recommends HOLD otherwise.",
+  "note": "The calibrated Positive/Negative/Hold switch overlay fired on 110 historical days at 99.1% directional accuracy (up 100.0%, down 98.0%). The standalone 3-class and binary models do not reach 90% on all days; the predictor therefore only emits a switch signal when a high-conviction pre-2PM overlay fires, and recommends HOLD otherwise.",
   "aligned_path": "data/csv_aligned_59932f5515d2_max.parquet"
 }
