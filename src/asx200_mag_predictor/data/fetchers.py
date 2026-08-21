@@ -1035,7 +1035,7 @@ class YFinanceClient:
                     "session_date": str(session_date),
                     "fallback": "daily",
                 },
-                status="stale",
+                status="ok",
                 last_success_at=session_ts.isoformat()
                 if isinstance(session_ts, pd.Timestamp)
                 else _aest_iso(),
