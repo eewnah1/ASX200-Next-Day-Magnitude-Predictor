@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import warnings
 from pathlib import Path
 from typing import Any
@@ -65,6 +66,25 @@ def _cache_path_for_csv(csv_path: str | Path | None, period: str) -> Path:
     return data_dir / f"csv_backtest_rows_{file_hash}_{period}.parquet"
 
 
+def _seed_cache_path(csv_path: str | Path | None, period: str) -> Path | None:
+    """Return a bundled seed cache for the uploaded CSV if one exists."""
+    path = Path(csv_path or DEFAULT_CSV)
+    if path.exists():
+        file_hash = hashlib.md5(path.read_bytes()).hexdigest()[:12]
+    else:
+        return None
+
+    candidates = [
+        Path(__file__).resolve().parent.parent / "data" / "seed_csv_cache",
+        Path("src/asx200_mag_predictor/data/seed_csv_cache"),
+    ]
+    for candidate in candidates:
+        seed = candidate / f"csv_backtest_rows_{file_hash}_{period}.parquet"
+        if seed.is_file():
+            return seed
+    return None
+
+
 def _set_labels_from_actual(rows: pd.DataFrame) -> pd.DataFrame:
     """Recompute primary / secondary labels from the CSV actual next-day return."""
     from asx200_mag_predictor.scoring.ml import _bucket_from_return
@@ -94,10 +114,19 @@ def _load_or_build_rows(
     cache_path: Path | None = None,
     target_column: str = "Australian Shares",
 ) -> pd.DataFrame:
-    """Build the historical feature matrix (with caching)."""
+    """Build the historical feature matrix (with caching + seed cache fallback)."""
     cache = cache_path or _cache_path_for_csv(csv_path, period)
     if cache.exists():
         try:
+            return _set_labels_from_actual(pd.read_parquet(cache))
+        except Exception:
+            pass
+
+    seed = _seed_cache_path(csv_path, period)
+    if seed and seed.is_file():
+        try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(seed, cache)
             return _set_labels_from_actual(pd.read_parquet(cache))
         except Exception:
             pass
