@@ -448,11 +448,11 @@ class ScoringEngine:
             primary_contributions.append(
                 FactorContribution(
                     name="Daily Rates Overlay",
-                    raw_value=None,
-                    raw_unit="",
+                    raw_value=hc_signal.bucket,
+                    raw_unit="bucket",
                     direction="bullish" if hc_signal.bucket == "Large Up" else "bearish",
-                    weight=1.0,
-                    score=primary_score,
+                    weight=0.0,
+                    score=round(primary_score, 4),
                     note=hc_signal.reason,
                     group="Overlay",
                 )
@@ -478,11 +478,11 @@ class ScoringEngine:
                 primary_contributions.append(
                     FactorContribution(
                         name="Pre-Market Overlay",
-                        raw_value=None,
-                        raw_unit="",
+                        raw_value=pm_signal.bucket,
+                        raw_unit="bucket",
                         direction="bullish",
-                        weight=1.0,
-                        score=primary_score,
+                        weight=0.0,
+                        score=round(primary_score, 4),
                         note=pm_signal.reason,
                         group="Overlay",
                     )
@@ -617,12 +617,13 @@ class ScoringEngine:
                     raw_unit="score",
                     direction=_direction_label(fv.news_sentiment_score),
                     weight=0.0,
-                    score=0.0,
+                    score=round(_clamp(fv.news_sentiment_score, -1.0, 1.0, 0.0), 4),
                     note=f"entity/sector sentiment score={fv.news_sentiment_score:+.2f}",
                     group="Optional",
                 )
             )
         if fv.options_positioning_score is not None:
+            opt_score = round(_clamp(-fv.options_positioning_score, -1.0, 1.0, 0.0), 4)
             factor_contributions.append(
                 FactorContribution(
                     name="Options / Positioning",
@@ -630,7 +631,7 @@ class ScoringEngine:
                     raw_unit="score",
                     direction=_direction_label(-fv.options_positioning_score),
                     weight=0.0,
-                    score=0.0,
+                    score=opt_score,
                     note=fv.options_positioning_note or "options positioning context",
                     group="Optional",
                 )
@@ -1274,7 +1275,7 @@ class ScoringEngine:
                 raw_unit="score",
                 direction="neutral",
                 weight=0.0,
-                score=0.0,
+                score=round(regime_confidence, 4),
                 note=f"regime={regime}; financials_index={fi:.2f}; materials_index={mi:.2f}",
                 group="Primary",
             )
