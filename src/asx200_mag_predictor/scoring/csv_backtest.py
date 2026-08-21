@@ -257,7 +257,7 @@ def _set_labels_from_actual(rows: pd.DataFrame) -> pd.DataFrame:
 
 def _load_or_build_rows(
     csv_path: str | Path | None = None,
-    period: str = "5y",
+    period: str = "max",
     cache_path: Path | None = None,
     target_column: str = "Australian Shares",
 ) -> pd.DataFrame:
@@ -349,7 +349,7 @@ def _sweep(
 
 def run_backtest(
     csv_path: str | Path | None = None,
-    period: str = "5y",
+    period: str = "max",
     n_splits: int = 5,
 ) -> dict[str, Any]:
     """Run a walk-forward backtest and return a summary dict."""
@@ -633,7 +633,7 @@ def _train_from_rows(
 def train_models_from_csv(
     csv_path: str | Path,
     model_dir: str | Path,
-    period: str = "5y",
+    period: str = "max",
     target_column: str = "Australian Shares",
 ) -> dict[str, Any]:
     """Build feature rows from a user CSV and train the hybrid ML models."""
@@ -645,7 +645,7 @@ def train_models_from_csv(
 
 def run_backtest_and_train(
     csv_path: str | Path | None = None,
-    period: str = "5y",
+    period: str = "max",
     n_splits: int = 5,
     model_dir: str | Path | None = None,
     target_column: str = "Australian Shares",

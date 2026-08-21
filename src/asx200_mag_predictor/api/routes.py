@@ -367,7 +367,7 @@ async def upload_backtest_csv(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     target_column: str = Form("Australian Shares"),
-    period: str = Form("5y"),
+    period: str = Form("max"),
     train_models: bool = Form(True),
 ) -> dict[str, Any]:
     """Upload a daily-rates CSV and start an async backtest + model retrain job."""
