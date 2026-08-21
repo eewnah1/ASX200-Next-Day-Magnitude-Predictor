@@ -1,67 +1,201 @@
 {
-  "total_days": 4582,
-  "high_conviction_signals": 31,
-  "signal_coverage": 0.0068,
-  "directional_accuracy": 0.9677,
-  "bucket_accuracy": 0.8387,
-  "by_bucket": {
-    "Large Up": {
-      "signals": 19,
-      "directional_accuracy": 0.9474,
-      "bucket_accuracy": 0.7368,
-      "mean_return_pct": 1.098
+  "csv_file": "Daily_Rates_01_Jul_2008_-_20_Aug_2026_Australian_shares_ASX_200.csv",
+  "target_column": "Australian Shares",
+  "period": "5y",
+  "n_rows_total": 1202,
+  "n_rows_tested": 1000,
+  "n_features": 110,
+  "date_range": {
+    "start": "2022-09-05 00:00:00",
+    "end": "2026-08-18 00:00:00"
+  },
+  "overall": {
+    "three_class_accuracy": 0.629,
+    "directional_accuracy": 0.373,
+    "baseline_up_rate": 0.447,
+    "mean_next_return_pct": 0.0468
+  },
+  "high_confidence": {
+    "up_threshold": {
+      "threshold": 0.5,
+      "signals": 86,
+      "directional_accuracy": 0.593,
+      "mean_return_pct": 0.3843,
+      "large_move_rate": 0.3488
     },
-    "Large Down": {
-      "signals": 12,
-      "directional_accuracy": 1.0,
-      "bucket_accuracy": 1.0,
-      "mean_return_pct": -2.1352
+    "down_threshold": {
+      "threshold": 0.5,
+      "signals": 93,
+      "directional_accuracy": 0.6022,
+      "mean_return_pct": -0.4039,
+      "large_move_rate": 0.3548
     }
   },
-  "rules": [
-    {
-      "bucket": "Large Up",
-      "conditions": [
-        [
-          "international_shares",
-          ">",
-          2.0
-        ],
-        [
-          "high_growth",
-          ">",
-          -0.5
-        ],
-        [
-          "balanced",
-          "<",
-          1.0
-        ]
-      ],
+  "threshold_sweep": {
+    "large_up": [
+      {
+        "threshold": 0.95,
+        "signals": 14,
+        "directional_accuracy": 0.7857,
+        "mean_return_pct": 0.7952,
+        "large_move_rate": 0.5714
+      },
+      {
+        "threshold": 0.9,
+        "signals": 18,
+        "directional_accuracy": 0.6111,
+        "mean_return_pct": 0.6022,
+        "large_move_rate": 0.4444
+      },
+      {
+        "threshold": 0.85,
+        "signals": 23,
+        "directional_accuracy": 0.5652,
+        "mean_return_pct": 0.4519,
+        "large_move_rate": 0.3478
+      },
+      {
+        "threshold": 0.8,
+        "signals": 31,
+        "directional_accuracy": 0.6129,
+        "mean_return_pct": 0.4985,
+        "large_move_rate": 0.4194
+      },
+      {
+        "threshold": 0.75,
+        "signals": 41,
+        "directional_accuracy": 0.6098,
+        "mean_return_pct": 0.4384,
+        "large_move_rate": 0.3902
+      },
+      {
+        "threshold": 0.7,
+        "signals": 48,
+        "directional_accuracy": 0.625,
+        "mean_return_pct": 0.449,
+        "large_move_rate": 0.4167
+      },
+      {
+        "threshold": 0.65,
+        "signals": 55,
+        "directional_accuracy": 0.6,
+        "mean_return_pct": 0.407,
+        "large_move_rate": 0.3818
+      },
+      {
+        "threshold": 0.6,
+        "signals": 62,
+        "directional_accuracy": 0.5968,
+        "mean_return_pct": 0.4077,
+        "large_move_rate": 0.371
+      },
+      {
+        "threshold": 0.55,
+        "signals": 73,
+        "directional_accuracy": 0.589,
+        "mean_return_pct": 0.3829,
+        "large_move_rate": 0.3425
+      },
+      {
+        "threshold": 0.5,
+        "signals": 86,
+        "directional_accuracy": 0.593,
+        "mean_return_pct": 0.3843,
+        "large_move_rate": 0.3488
+      }
+    ],
+    "large_down": [
+      {
+        "threshold": 0.95,
+        "signals": 17,
+        "directional_accuracy": 0.4706,
+        "mean_return_pct": -0.5547,
+        "large_move_rate": 0.3529
+      },
+      {
+        "threshold": 0.9,
+        "signals": 27,
+        "directional_accuracy": 0.4444,
+        "mean_return_pct": -0.4325,
+        "large_move_rate": 0.2963
+      },
+      {
+        "threshold": 0.85,
+        "signals": 40,
+        "directional_accuracy": 0.5,
+        "mean_return_pct": -0.4044,
+        "large_move_rate": 0.325
+      },
+      {
+        "threshold": 0.8,
+        "signals": 49,
+        "directional_accuracy": 0.5306,
+        "mean_return_pct": -0.4009,
+        "large_move_rate": 0.3265
+      },
+      {
+        "threshold": 0.75,
+        "signals": 54,
+        "directional_accuracy": 0.537,
+        "mean_return_pct": -0.3731,
+        "large_move_rate": 0.2963
+      },
+      {
+        "threshold": 0.7,
+        "signals": 56,
+        "directional_accuracy": 0.5536,
+        "mean_return_pct": -0.3966,
+        "large_move_rate": 0.3214
+      },
+      {
+        "threshold": 0.65,
+        "signals": 66,
+        "directional_accuracy": 0.5758,
+        "mean_return_pct": -0.3982,
+        "large_move_rate": 0.3485
+      },
+      {
+        "threshold": 0.6,
+        "signals": 74,
+        "directional_accuracy": 0.5811,
+        "mean_return_pct": -0.3965,
+        "large_move_rate": 0.3649
+      },
+      {
+        "threshold": 0.55,
+        "signals": 85,
+        "directional_accuracy": 0.6118,
+        "mean_return_pct": -0.4059,
+        "large_move_rate": 0.3529
+      },
+      {
+        "threshold": 0.5,
+        "signals": 93,
+        "directional_accuracy": 0.6022,
+        "mean_return_pct": -0.4039,
+        "large_move_rate": 0.3548
+      }
+    ]
+  },
+  "pre_market_overlay": {
+    "signals": 6,
+    "directional_accuracy": 1.0,
+    "mean_return_pct": 0.8278,
+    "rule": "us_futures_change_pct > 1.2 AND vix_change_pct > 0.5"
+  },
+  "daily_rates_overlay": {
+    "large_up": {
       "signals": 19,
-      "directional_accuracy": 0.9474
+      "directional_accuracy": 0.947,
+      "mean_return_pct": 1.1,
+      "note": "Same-day Australian Shares return >= +2.10% (requires after-2PM data)"
     },
-    {
-      "bucket": "Large Down",
-      "conditions": [
-        [
-          "international_shares",
-          "<",
-          -1.5
-        ],
-        [
-          "high_growth",
-          "<",
-          -1.0
-        ],
-        [
-          "balanced",
-          ">",
-          -1.0
-        ]
-      ],
+    "large_down": {
       "signals": 12,
-      "directional_accuracy": 1.0
+      "directional_accuracy": 1.0,
+      "mean_return_pct": -1.74,
+      "note": "Same-day Australian Shares return <= -1.84% (requires after-2PM data)"
     }
-  ]
+  },
+  "note": "The primary ML model does not reach 90% directional accuracy at any practical probability threshold. The pre-market S&P 500 futures + VIX overlay did (6 signals, 100.0% directional accuracy OOS) on this CSV. Treat other days as 'stay put'."
 }

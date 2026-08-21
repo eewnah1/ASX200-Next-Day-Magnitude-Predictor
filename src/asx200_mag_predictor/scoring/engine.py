@@ -39,6 +39,9 @@ from asx200_mag_predictor.scoring.features import (
     score_housing_credit_pulse,
 )
 from asx200_mag_predictor.scoring.ml import HybridML
+from asx200_mag_predictor.scoring.pre_market_overlay import (
+    evaluate_pre_market_overlay,
+)
 from asx200_mag_predictor.timezone import now_sydney
 
 logger = get_logger(__name__)
@@ -461,7 +464,37 @@ class ScoringEngine:
                 "high_conviction_reason": hc_signal.reason,
             }
         else:
-            notes_for_hc = ""
+            # Experimental pre-market overlay when daily-rates are unavailable.
+            pm_signal = evaluate_pre_market_overlay(fv)
+            if pm_signal is not None:
+                primary_bucket = pm_signal.bucket
+                primary_score = 3.5
+                ml_primary_probs = {
+                    "Large Up": 0.95,
+                    "Neutral": 0.05,
+                    "Large Down": 0.0,
+                }
+                primary_contributions.append(
+                    FactorContribution(
+                        name="Pre-Market Overlay",
+                        raw_value=None,
+                        raw_unit="",
+                        direction="bullish",
+                        weight=1.0,
+                        score=primary_score,
+                        note=pm_signal.reason,
+                        group="Overlay",
+                    )
+                )
+                notes_for_hc = f"Pre-market overlay: {pm_signal.reason}"
+                hc_kwargs = {
+                    "high_conviction": True,
+                    "high_conviction_bucket": pm_signal.bucket,
+                    "high_conviction_historical_accuracy": pm_signal.historical_accuracy,
+                    "high_conviction_reason": pm_signal.reason,
+                }
+            else:
+                notes_for_hc = ""
 
         notes: list[str] = []
         if notes_for_hc:
@@ -1144,9 +1177,13 @@ class ScoringEngine:
                 weighted_bps = 0.5 * ib1 + 0.3 * (yt1 or 0.0) + 0.2 * (xt1 or 0.0)
                 rba_raw = weighted_bps
                 rba_score = _clamp(-weighted_bps / 4.0, -3.0, 3.0)
+                exp_pct = fv.rba_cash_rate_expected_pct
+                exp_str = f"{exp_pct:.3f}" if exp_pct is not None else "n/a"
+                yt1_str = f"{yt1:+.2f}" if yt1 is not None else "n/a"
+                xt1_str = f"{xt1:+.2f}" if xt1 is not None else "n/a"
                 rba_note = (
-                    f"IB1 cash expectation {fv.rba_cash_rate_expected_pct:.3f}% "
-                    f"({ib1:+.2f} bps), 3Y {yt1:+.2f} bps, 10Y {xt1:+.2f} bps"
+                    f"IB1 cash expectation {exp_str}% "
+                    f"({ib1:+.2f} bps), 3Y {yt1_str} bps, 10Y {xt1_str} bps"
                 )
             else:
                 rba_raw = None

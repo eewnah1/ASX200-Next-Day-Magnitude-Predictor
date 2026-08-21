@@ -2,18 +2,20 @@
 
 The CSV contains daily percentage returns for several investment options.
 Backtests against the `Australian Shares` column found two high-conviction
-next-day rules that fire on the subset of days where the previous day's
-International Shares (and related option) moves are extreme:
+next-day rules that fire on the subset of days where same-day International
+Shares (and related option) moves are extreme:
 
 - Large Up: International Shares > 2.0%, High Growth > -0.5%, Balanced < 1.0%
-  -> 92.6% positive next-day direction for Australian Shares (27 signals)
+  -> 94.7% positive next-day direction for Australian Shares (19 signals)
 - Large Down: International Shares < -1.5%, High Growth < -1.0%, Balanced > -1.0%
-  -> 100.0% negative next-day direction for Australian Shares, 91.7% large down
+  -> 100.0% negative next-day direction for Australian Shares, 75.0% large down
      (12 signals)
 
-These rules are used as a transparent overlay: when present-day daily-rates
-conditions match, the engine overrides the primary bucket with the historically
-high-accuracy bucket and exposes the signal in the dashboard.
+These rules are used as a transparent overlay: when same-day daily-rates
+conditions are available before the 2 PM fund-switch cutoff, the engine can
+override the primary bucket with the historically high-accuracy bucket and
+expose the signal in the dashboard. If daily-rates data is not available in
+time, the overlay is skipped and the ML/primary model remains the active signal.
 """
 
 from __future__ import annotations
@@ -72,12 +74,12 @@ HIGH_CONVICTION_RULES: list[dict[str, Any]] = [
             "high_growth": (">", -0.5),
             "balanced": ("<", 1.0),
         },
-        "historical_accuracy": 0.9259,
-        "mean_return_pct": 1.13,
-        "signals_n": 27,
+        "historical_accuracy": 0.9474,
+        "mean_return_pct": 1.10,
+        "signals_n": 19,
         "description": (
             "International Shares up >2.0%, High Growth >-0.5%, Balanced <1.0% "
-            "→ next-day ASX 200 up (92.6% historical directional hit rate, 27 signals)"
+            "→ next-day ASX 200 up (94.7% historical directional hit rate, 19 signals)"
         ),
     },
     {
@@ -88,11 +90,12 @@ HIGH_CONVICTION_RULES: list[dict[str, Any]] = [
             "balanced": (">", -1.0),
         },
         "historical_accuracy": 1.0,
-        "mean_return_pct": -2.14,
+        "mean_return_pct": -1.74,
         "signals_n": 12,
         "description": (
             "International Shares down <-1.5%, High Growth <-1.0%, Balanced >-1.0% "
-            "→ next-day ASX 200 down (100% historical directional hit rate, 12 signals)"
+            "→ next-day ASX 200 down (100% historical directional hit rate, 12 signals, "
+            "75.0% large down)"
         ),
     },
 ]
