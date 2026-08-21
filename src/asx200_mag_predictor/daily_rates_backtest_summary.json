@@ -687,6 +687,6 @@
       "switch_mean_return_pct": 0.2834
     }
   ],
-  "note": "Neither the 3-class nor the dedicated binary Up/Down model reaches 90% directional accuracy at any practical threshold. The pre-market S&P 500 futures + VIX overlay did (10 signals, 100.0% directional accuracy OOS) on this CSV. Treat other days as 'stay put'.",
+  "note": "The calibrated Positive/Negative/Hold switch overlay fired on 124 historical days at 93.5% directional accuracy (up 96.2%, down 91.7%). The standalone 3-class and binary models do not reach 90% on all days; the predictor therefore only emits a switch signal when a high-conviction pre-2PM overlay fires, and recommends HOLD otherwise.",
   "aligned_path": "data/csv_aligned_59932f5515d2_max.parquet"
 }

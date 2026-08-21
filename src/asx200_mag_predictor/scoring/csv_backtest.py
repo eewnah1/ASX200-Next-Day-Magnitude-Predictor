@@ -451,8 +451,6 @@ def run_backtest(
 
     pre_market = _evaluate_pre_market(aligned)
 
-    selected_up_reaches_90 = hc_up is not None and hc_up["directional_accuracy"] >= 0.90
-    selected_down_reaches_90 = hc_down is not None and hc_down["directional_accuracy"] >= 0.90
     bin_hc_up = next(
         (
             s
@@ -469,38 +467,30 @@ def run_backtest(
         ),
         bin_down_sweep[-1] if bin_down_sweep else None,
     )
-    bin_reaches_90 = (
-        (bin_hc_up is not None and bin_hc_up["directional_accuracy"] >= 0.90)
-        or (bin_hc_down is not None and bin_hc_down["directional_accuracy"] >= 0.90)
-    )
-
-    if selected_up_reaches_90 or selected_down_reaches_90:
+    switch = _switch_signal_summary(aligned)
+    if switch.get("signals", 0) >= 5 and (switch.get("directional_accuracy") or 0.0) >= 0.90:
         note = (
-            "High-confidence probability thresholds that exceed 90% directional accuracy "
-            "were found for at least one side; signals are rare and the remaining days "
-            "should be treated as 'stay put' (no switch)."
-        )
-    elif bin_reaches_90:
-        note = (
-            "The dedicated binary Up/Down model found a probability threshold that exceeds "
-            "90% directional accuracy on this CSV. Use it as the pre-2PM switch signal; "
-            "all other days should be treated as 'stay put'."
+            f"The calibrated Positive/Negative/Hold switch overlay fired on "
+            f"{switch['signals']} historical days at "
+            f"{switch['directional_accuracy']:.1%} directional accuracy "
+            f"(up {switch['up_accuracy']:.1%}, down {switch['down_accuracy']:.1%}). "
+            "The standalone 3-class and binary models do not reach 90% on all days; "
+            "the predictor therefore only emits a switch signal when a high-conviction "
+            "pre-2PM overlay fires, and recommends HOLD otherwise."
         )
     elif pre_market and pre_market["directional_accuracy"] >= 0.90:
         note = (
-            "Neither the 3-class nor the dedicated binary Up/Down model reaches 90% "
-            "directional accuracy at any practical threshold. "
-            "The pre-market S&P 500 futures + VIX overlay did "
+            "The standalone 3-class and binary Up/Down models do not reach 90% "
+            "directional accuracy on this CSV. "
+            "Use the pre-market S&P 500 futures + VIX overlay "
             f"({pre_market['signals']} signals, {pre_market['directional_accuracy']:.1%} "
-            "directional accuracy OOS) on this CSV. Treat other days as 'stay put'."
+            "directional accuracy OOS) as the switch signal; all other days are HOLD."
         )
     else:
         note = (
-            "Neither the 3-class nor the dedicated binary Up/Down model reaches 90% "
-            "directional accuracy at any practical threshold on this CSV. "
-            "High-conviction switches require additional overlays (daily-rates or "
-            "pre-market futures/VIX) which only fire on a small fraction of days. "
-            "The remaining days should be treated as 'stay put'."
+            "The standalone 3-class and binary models do not reach 90% directional "
+            "accuracy on this CSV and no strong pre-2PM overlay fired. "
+            "The recommended action for most days is HOLD (stay put)."
         )
 
     summary = {
