@@ -1809,12 +1809,23 @@ class ScoringEngine:
             or (vix > 14.0 and hw > 0.78)
         )
 
+        historical_accuracy = 0.96
         if positive:
-            return "POSITIVE", 0.94, 0.96, "Dow/VIX or yield/ML positive high-conviction rule"
+            return (
+                "POSITIVE",
+                0.94,
+                historical_accuracy,
+                "Dow/VIX or yield/ML positive high-conviction rule",
+            )
         if negative:
-            return "NEGATIVE", 1.0, 0.96, "VIX spike with ASX intraday/ breadth/ heavyweight stress"
+            return (
+                "NEGATIVE",
+                1.0,
+                historical_accuracy,
+                "VIX spike with ASX intraday/ breadth/ heavyweight stress",
+            )
 
-        return "HOLD", 0.0, 0.0, "No high-conviction pre-2PM switch signal"
+        return "HOLD", 0.0, historical_accuracy, "No high-conviction pre-2PM switch signal"
 
     def _coerce(self, features: FeatureVector | dict[str, Any]) -> FeatureVector:
         if isinstance(features, FeatureVector):
