@@ -31,7 +31,7 @@ def ensure_seed_ml_models(model_dir: Path | None = None, settings: Settings | No
         )
     except Exception:  # noqa: BLE001
         pass
-    seed_candidates.append(Path(__file__).resolve().parent / "seed_ml_models")
+    seed_candidates.append(Path(__file__).resolve().parent.parent / "data" / "seed_ml_models")
     seed_candidates.append(Path("src/asx200_mag_predictor/data/seed_ml_models"))
 
     for seed in seed_candidates:
@@ -41,7 +41,13 @@ def ensure_seed_ml_models(model_dir: Path | None = None, settings: Settings | No
             src_primary = seed / "primary.pkl"
             if not src_primary.is_file():
                 continue
-            for name in ("primary.pkl", "secondary.pkl", "mapper.pkl", "metadata.json"):
+            for name in (
+                "primary.pkl",
+                "secondary.pkl",
+                "binary.pkl",
+                "mapper.pkl",
+                "metadata.json",
+            ):
                 src = seed / name
                 if src.is_file():
                     shutil.copy2(src, target / name)
