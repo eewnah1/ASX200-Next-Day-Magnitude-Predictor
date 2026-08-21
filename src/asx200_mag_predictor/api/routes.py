@@ -300,14 +300,14 @@ async def tradingview_lookup(symbols: str) -> dict[str, Any]:
     return await asyncio.to_thread(fiale_lookup, *parts)
 
 
-def _process_upload(
+def _run_backtest_sync(
     job_id: str,
     file_path: Path,
     target_column: str,
     period: str,
     train_models: bool,
 ) -> None:
-    """Background worker: run backtest + optional model retrain from uploaded CSV."""
+    """Synchronous worker: run backtest + optional model retrain from uploaded CSV."""
     from asx200_mag_predictor.scoring.csv_backtest import (
         run_backtest_and_train,
         write_summary,
@@ -347,6 +347,19 @@ def _process_upload(
     except Exception as exc:  # noqa: BLE001
         logger.exception("Upload backtest/train failed")
         _upload_jobs[job_id].update({"status": "failed", "error": str(exc)})
+
+
+async def _process_upload(
+    job_id: str,
+    file_path: Path,
+    target_column: str,
+    period: str,
+    train_models: bool,
+) -> None:
+    """Background worker wrapper that runs the sync backtest in a thread."""
+    await asyncio.to_thread(
+        _run_backtest_sync, job_id, file_path, target_column, period, train_models
+    )
 
 
 @router.post("/backtest/upload")
