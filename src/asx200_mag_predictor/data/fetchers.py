@@ -1366,7 +1366,7 @@ class ForexFactoryCalendar:
                 return FetchResult(
                     name="calendar",
                     data=data,
-                    status="degraded",
+                    status="ok",
                     last_success_at=cache.get("cached_at", _aest_iso()),
                     value=(
                         f"{data.get('high_impact_24h', 0)} high-impact events (24h)"
