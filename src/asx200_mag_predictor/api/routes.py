@@ -423,6 +423,23 @@ async def debug_seed(csv_path: str = "/data/uploads/placeholder.csv") -> dict[st
     }
 
 
+@router.get("/debug/parquet")
+async def debug_parquet() -> dict[str, Any]:
+    """Read the seed parquet and report its shape."""
+    from asx200_mag_predictor.scoring.csv_backtest import _seed_cache_path
+
+    seed = _seed_cache_path("/data/uploads/test.csv", "5y")
+    if not seed:
+        return {"seed": None}
+    try:
+        import pandas as pd
+
+        df = pd.read_parquet(seed)
+        return {"seed": str(seed), "rows": len(df), "columns": len(df.columns)}
+    except Exception as exc:  # noqa: BLE001
+        return {"seed": str(seed), "error": str(exc)}
+
+
 @router.get("/debug/seeds")
 async def debug_seeds() -> dict[str, Any]:
     """List bundled seed cache and model directories."""
