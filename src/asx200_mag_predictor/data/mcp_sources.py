@@ -74,7 +74,9 @@ def get_market_sources() -> list[dict[str, Any]]:
             "note": (
                 "Live feed for ^AXJO, SPY, VIX, GC=F, CL=F, AUDUSD=X, "
                 "BHP.AX, CBA.AX, WDS.AX, FMG.AX, CSL.AX, NAB.AX, WBC.AX, ANZ.AX, GMG.AX, "
-                "TLS.AX, RIO.AX, iron ore, gold, oil, copper and US 10Y."
+                "TLS.AX, RIO.AX, iron ore, gold, oil, copper and US 10Y. "
+                "Yahoo Finance MCP toolkit: historical prices, stock info, news, stock actions, "
+                "financial statements, holder info, option expirations, option chain, recommendations."
             ),
         },
         {
