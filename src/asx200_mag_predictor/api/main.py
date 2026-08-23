@@ -9,7 +9,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from asx200_mag_predictor.api.mcp_router import router as mcp_router
 from asx200_mag_predictor.api.routes import router
@@ -100,7 +100,22 @@ async def health():
         ml_dir = str(hybrid.model_dir)
     except Exception:
         pass
-    return {"status": "ok", "env": settings.app_env, "ml_available": ml_available, "ml_model_dir": ml_dir, "mcp_stack": True}
+    return {"status": "ok", "env": settings.app_env, "ml_available": ml_available, "ml_model_dir": ml_dir, "mcp_stack": True, "mcp_research": True}
+
+
+@app.get("/mcp", include_in_schema=False)
+async def mcp_alias():
+    return RedirectResponse("/api/v1/mcp")
+
+
+@app.get("/mcp/research", include_in_schema=False)
+async def mcp_research_alias():
+    return RedirectResponse("/api/v1/mcp/research")
+
+
+@app.get("/mcp/stack", include_in_schema=False)
+async def mcp_stack_alias():
+    return RedirectResponse("/api/v1/mcp/stack")
 
 
 @app.get("/", response_class=HTMLResponse)
