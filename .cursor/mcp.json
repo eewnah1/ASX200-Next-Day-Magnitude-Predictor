@@ -1,0 +1,32 @@
+{
+  "mcpServers": {
+    "trading-economics": {
+      "url": "https://mcp.tradingeconomics.com"
+    },
+    "finnhub": {
+      "command": "npx",
+      "args": ["-y", "finnhub-mcp", "--stdio"],
+      "env": {
+        "FINNHUB_API_KEY": ""
+      }
+    },
+    "finnhub-hosted": {
+      "url": "https://mcp.finnhub.io/mcp"
+    },
+    "cnbs": {
+      "command": "npx",
+      "args": ["-y", "mcp-cnbs"]
+    },
+    "earningscalls": {
+      "url": "https://mcp.earningscalls.dev/mcp"
+    },
+    "stock-scanner": {
+      "command": "npx",
+      "args": ["-y", "stock-scanner-mcp"]
+    },
+    "te-calendar": {
+      "command": "uvx",
+      "args": ["trading-economics-mcp"]
+    }
+  }
+}
