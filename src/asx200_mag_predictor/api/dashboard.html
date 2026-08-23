@@ -135,6 +135,11 @@
       <table id="healthTable"><thead><tr><th>Source</th><th>Status</th><th>Value</th><th>Last update</th></tr></thead><tbody></tbody></table>
     </div>
     <div class="card" style="grid-column: 1 / -1;">
+      <h2>Source / MCP Catalogue</h2>
+      <table id="sourcesCatalogTable"><thead><tr><th>Name</th><th>Type</th><th>Configured</th><th>Note</th></tr></thead><tbody></tbody></table>
+      <div id="sourcesCatalogStatus" class="status" style="margin-top:8px;"></div>
+    </div>
+    <div class="card" style="grid-column: 1 / -1;">
       <h2>Economic calendar</h2>
       <div id="calendar">No calendar data.</div>
     </div>
@@ -443,6 +448,26 @@
       }
     }
 
+    async function loadSources() {
+      const statusEl = $('sourcesCatalogStatus');
+      try {
+        const data = await api('/sources');
+        const rows = (data.sources || []).map(s => `
+          <tr>
+            <td>${s.name}</td>
+            <td style="color:var(--muted)">${s.type}</td>
+            <td class="${s.configured ? 'ok' : 'bad'}">${s.configured ? 'LIVE' : 'OFF'}</td>
+            <td style="color:var(--muted)">${s.note || '-'}</td>
+          </tr>
+        `).join('');
+        $('sourcesCatalogTable').querySelector('tbody').innerHTML = rows || '<tr><td colspan="4" style="color:var(--muted)">No sources configured.</td></tr>';
+        statusEl.textContent = '';
+      } catch (e) {
+        statusEl.textContent = 'Could not load source catalogue.';
+        statusEl.className = 'status error';
+      }
+    }
+
     async function loadLatest() {
       try {
         const data = await api('/predictions/latest');
@@ -666,7 +691,7 @@
     function loadTvLookup() { loadTv('/tradingview/lookup?symbols=ASX:CBA,ASX:BHP,ASX:WDS', 'lookup'); }
 
     (async () => {
-      await Promise.all([loadLatest(), loadCalendar(), loadBacktestSummary()]);
+      await Promise.all([loadLatest(), loadCalendar(), loadBacktestSummary(), loadSources()]);
     })();
   </script>
 </body>

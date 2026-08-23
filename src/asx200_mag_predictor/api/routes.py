@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from asx200_mag_predictor.config import get_settings
 from asx200_mag_predictor.data.fetchers import DataFetcher
+from asx200_mag_predictor.data.mcp_sources import get_market_sources
 from asx200_mag_predictor.logging_config import get_logger
 from asx200_mag_predictor.scoring.engine import ScoringEngine
 from asx200_mag_predictor.scoring.features import RawMarketData, build_features
@@ -57,6 +58,11 @@ async def status() -> dict[str, Any]:
         "env": get_settings().app_env,
         "database_url": get_settings().database_url,
     }
+
+
+@router.get("/sources")
+async def sources() -> dict[str, Any]:
+    return {"sources": get_market_sources()}
 
 
 def _predict_sync(body: PredictRequest) -> dict[str, Any]:
