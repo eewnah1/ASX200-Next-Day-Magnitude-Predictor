@@ -7,11 +7,36 @@ import importlib.util
 from typing import Any
 
 
+def _is_truthy_env(value: str | None) -> bool:
+    """Return True only when an env value is actually set and not a placeholder."""
+    if not value:
+        return False
+    cleaned = value.strip().lower().strip("'\"")
+    return cleaned and cleaned not in {
+        "",
+        "not configured",
+        "not set",
+        "none",
+        "null",
+        "n/a",
+        "na",
+        "false",
+        "0",
+        "placeholder",
+        "missing",
+        "unset",
+        "your_key_here",
+        "your-api-key",
+        "example",
+        "test",
+    }
+
+
 def _env(*names: str) -> str:
-    """Return the first non-empty environment variable value."""
+    """Return the first non-empty, non-placeholder environment variable value."""
     for name in names:
         value = (os.environ.get(name) or "").strip()
-        if value:
+        if _is_truthy_env(value):
             return value
     return ""
 
@@ -53,6 +78,8 @@ def get_market_sources() -> list[dict[str, Any]]:
         "MARKETPSYCH_API_TOKEN",
         "BUZZBERG_API_TOKEN",
     )
+    rba_key = _env_bool("RBA_API_KEY", "RBA_OFFICIAL_CASH_RATE_URL")
+    abs_key = _env_bool("ABS_API_KEY", "ABS_STATS_API_KEY")
     benzinga = _env_bool("BENZINGA_API_KEY")
     newsapi = _env_bool("NEWSAPI_API_KEY", "NEWS_API_KEY")
     stocktwits = _env_bool("STOCKTWITS_API_KEY")
@@ -128,14 +155,22 @@ def get_market_sources() -> list[dict[str, Any]]:
         {
             "name": "RBA official cash rate / yield curve",
             "type": "macro",
-            "configured": True,
-            "note": "Reserve Bank of Australia cash rate and Australian government yield curve; sourced from rba.gov.au and Yahoo Finance (AUSB10Y=).",
+            "configured": rba_key,
+            "note": (
+                "Set RBA_API_KEY / RBA_OFFICIAL_CASH_RATE_URL for direct RBA data; Yahoo bond proxies are used as a fallback."
+                if not rba_key
+                else "Reserve Bank of Australia cash rate and Australian government yield curve; sourced from rba.gov.au and Yahoo Finance (AUSB10Y=)."
+            ),
         },
         {
             "name": "Australian Bureau of Statistics (ABS)",
             "type": "macro",
-            "configured": True,
-            "note": "Australian labour, inflation, GDP and housing statistics; configure ABS_API_KEY for API access.",
+            "configured": abs_key,
+            "note": (
+                "Set ABS_API_KEY / ABS_STATS_API_KEY for API access; public releases are available but not automatically scraped."
+                if not abs_key
+                else "Australian labour, inflation, GDP and housing statistics; sourced via ABS API."
+            ),
         },
         {
             "name": "ASX sector indices",
@@ -236,8 +271,8 @@ def get_market_sources() -> list[dict[str, Any]]:
         {
             "name": "ASIC short position reports",
             "type": "fundamental",
-            "configured": True,
-            "note": "Weekly aggregated short positions from ASIC; weekly frequency, public data.",
+            "configured": False,
+            "note": "Weekly aggregated short positions from ASIC (public weekly); not configured in this deployment.",
         },
         {
             "name": "SPI 200 futures",
@@ -260,26 +295,26 @@ def get_market_sources() -> list[dict[str, Any]]:
         {
             "name": "Westpac consumer sentiment",
             "type": "macro",
-            "configured": True,
-            "note": "Monthly Westpac-Melbourne Institute consumer sentiment; scraped from westpac.com.au / public releases.",
+            "configured": False,
+            "note": "Monthly Westpac-Melbourne Institute consumer sentiment (public releases); not configured in this deployment.",
         },
         {
             "name": "ANZ job advertisements",
             "type": "macro",
-            "configured": True,
-            "note": "Monthly ANZ job ads; public release from anz.com.au.",
+            "configured": False,
+            "note": "Monthly ANZ job ads (public release); not configured in this deployment.",
         },
         {
             "name": "Ai Group / S&P Global Australia PMI",
             "type": "macro",
-            "configured": True,
-            "note": "Monthly Australian manufacturing and services PMI; public releases.",
+            "configured": False,
+            "note": "Monthly Australian manufacturing and services PMI (public releases); not configured in this deployment.",
         },
         {
             "name": "CFTC AUD COT",
             "type": "macro",
-            "configured": True,
-            "note": "Weekly Commitment of Traders report for AUD futures positioning.",
+            "configured": False,
+            "note": "Weekly Commitment of Traders report for AUD futures positioning (public weekly); not configured in this deployment.",
         },
         {
             "name": "China macro proxies",
@@ -290,8 +325,8 @@ def get_market_sources() -> list[dict[str, Any]]:
         {
             "name": "RBNZ / RBA / Fed policy calendars",
             "type": "calendar",
-            "configured": True,
-            "note": "Scheduled central bank statements and rate decisions relevant to AUD and ASX.",
+            "configured": False,
+            "note": "Scheduled central bank statements and rate decisions; not configured in this deployment.",
         },
         {
             "name": "Australian bank earnings calendar",
